@@ -828,6 +828,7 @@ function handle(msg){
     if(d.btc)updateBTC(d.btc);
     if(d.portfolio_full)updatePortfolio(d.portfolio_full);
     if(d.positions!==undefined){ positions=d.positions; renderPositions(positions,d.position_prices||{}); }
+    if(d.closed_trades){ closedTrades=d.closed_trades; renderClosed(closedTrades); }
     if(d.auto_status)updateAutoStatus(d.auto_status);
     if(d.auto_status?.last_logs)d.auto_status.last_logs.forEach(l=>log(l.msg,ll(l.level)));
     if(d.auto_status?.last_opportunities?.length)renderOpps(d.auto_status.last_opportunities);

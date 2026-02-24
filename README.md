@@ -89,6 +89,7 @@ python bump_version.py major  # 1.0.0 -> 2.0.0
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v1.4.0 | 2026-02-24 | Strategy overhaul: fix directional edge filter (abs→signed), add 72h expiry filter, confidence floor ≥30%, max 6 positions cap, metals distance-to-target discount, MIN_EDGE 25%, real-time closed trades in dashboard, full English codebase |
 | v1.3.0 | 2026-02-24 | Full English UI, professional Forex EA-style Telegram notifications (trade open/close/daily report), auto-trade event detection, /report command |
 | v1.2.0 | 2026-02-24 | New v9 Trading Terminal dashboard, Telegram bot live integration, WS scan_interval broadcast, live PnL/charts/stats |
 | v1.1.0 | 2026-02-24 | Full English UI, chart stats fix, Telegram bot integration, live statistics panel |

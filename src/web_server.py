@@ -713,6 +713,7 @@ async def ws_broadcast_task(app):
             data["portfolio_full"] = summary
             data["positions"] = sim_engine.positions
             data["position_prices"] = live_cache.position_prices
+            data["closed_trades"] = sim_engine.closed_trades[-30:]
             data["auto_status"] = {
                 "running": auto_trader.running,
                 "scan_count": auto_trader.scan_count,
