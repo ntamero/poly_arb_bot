@@ -300,7 +300,7 @@ class PolymarketClient:
     GAMMA_API = "https://gamma-api.polymarket.com"
     CLOB_API = "https://clob.polymarket.com"
 
-    async def _fetch_clob_markets(self, pages=15) -> list:
+    async def _fetch_clob_markets(self, pages=3) -> list:
         """CLOB API sampling-markets - gercek aktif marketleri ve token ID'leri alir"""
         all_markets = []
         next_cursor = ""
@@ -409,7 +409,7 @@ class PolymarketClient:
 
     async def get_weather_markets(self) -> list:
         """Sicaklik/hava durumu marketlerini filtrele"""
-        markets = await self._fetch_clob_markets(pages=5)
+        markets = await self._fetch_clob_markets(pages=3)
         weather_words = ["temperature", "degrees", "celsius", "fahrenheit",
                         "weather", "snow", "rain", "hurricane", "storm"]
         return [m for m in markets
@@ -417,7 +417,7 @@ class PolymarketClient:
 
     async def get_btc_markets(self) -> list:
         """BTC/Crypto marketlerini filtrele"""
-        markets = await self._fetch_clob_markets(pages=5)
+        markets = await self._fetch_clob_markets(pages=3)
         crypto_words = ["bitcoin", "btc", "ethereum", "eth", "crypto", "solana"]
         return [m for m in markets
                 if any(w in m.get("question", "").lower() for w in crypto_words)]
@@ -819,7 +819,7 @@ class MetalsArbEngine:
         opportunities = []
 
         # Polymarket'ten XAU/XAG marketlerini bul
-        markets = await self.poly._fetch_clob_markets(pages=15)
+        markets = await self.poly._fetch_clob_markets(pages=3)
 
         # Daha spesifik filtre: gold/silver futures, XAU, XAG, ounce
         # Basit "gold" veya "silver" tek basina cok fazla false positive yaratir
@@ -849,8 +849,8 @@ class MetalsArbEngine:
         if metal_markets:
             log.info(f"  Ilk market: {metal_markets[0].get('question', '')[:70]}")
 
-        # Performans icin max 25 market analiz et
-        for market in metal_markets[:25]:
+        # Performans icin max 10 market analiz et
+        for market in metal_markets[:10]:
             question = market.get("question", "")
             tokens = market.get("tokens", [])
             if not tokens:
@@ -1041,8 +1041,9 @@ class SimulationEngine:
 
     def get_portfolio_summary(self) -> dict:
         total_invested = sum(p["amount"] for p in self.positions)
-        total_pnl = sum(t.get("pnl", 0) for t in self.closed_trades)
+        realized_pnl = sum(t.get("pnl", 0) for t in self.closed_trades)
         win_count = sum(1 for t in self.closed_trades if t.get("pnl", 0) > 0)
+        loss_count = sum(1 for t in self.closed_trades if t.get("pnl", 0) < 0)
         total_closed = len(self.closed_trades)
 
         return {
@@ -1050,16 +1051,20 @@ class SimulationEngine:
             "initial_balance": self.initial_balance,
             "total_invested": round(total_invested, 2),
             "portfolio_value": round(self.balance + total_invested, 2),
-            "total_pnl": round(total_pnl, 2),
-            "pnl_pct": round((total_pnl / self.initial_balance) * 100, 2) if self.initial_balance > 0 else 0,
+            "realized_pnl": round(realized_pnl, 2),
+            "unrealized_pnl": 0.0,  # web_server tarafından doldurulur
+            "total_pnl": round(realized_pnl, 2),
+            "pnl_pct": round((realized_pnl / self.initial_balance) * 100, 2) if self.initial_balance > 0 else 0,
             "open_positions": len(self.positions),
             "closed_trades": total_closed,
+            "win_count": win_count,
+            "loss_count": loss_count,
             "win_rate": round((win_count / total_closed) * 100, 1) if total_closed > 0 else 0,
             "total_trades": len(self.trade_history),
         }
 
     def resolve_position(self, position_id: str, outcome: str) -> dict:
-        """Pozisyonu sonuclandir (YES/NO) - binary (tam kazanc/tam kayip)"""
+        """Pozisyonu sonuclandir (YES/NO)"""
         pos = None
         for i, p in enumerate(self.positions):
             if p["id"] == position_id:
@@ -1081,45 +1086,6 @@ class SimulationEngine:
         pos["payout"] = round(payout, 2)
         pos["resolved_at"] = datetime.now(timezone.utc).isoformat()
         pos["outcome"] = outcome
-
-        self.balance += payout
-        self.closed_trades.append(pos)
-        self.save_state()
-        return pos
-
-    def sell_position(self, position_id: str, current_price: float) -> dict:
-        """
-        Pozisyonu mevcut piyasa fiyatindan sat (gercekci PnL).
-        Binary resolve yerine, gercek fiyat degisimine gore PnL hesaplar.
-        shares = amount / entry_price
-        current_value = shares * current_price
-        pnl = current_value - amount
-        """
-        pos = None
-        for i, p in enumerate(self.positions):
-            if p["id"] == position_id:
-                pos = self.positions.pop(i)
-                break
-        if not pos:
-            return {"error": "Pozisyon bulunamadi"}
-
-        entry_price = pos.get("entry_price", 0.5)
-        amount = pos.get("amount", 0)
-
-        if entry_price > 0:
-            shares = amount / entry_price
-            payout = shares * current_price
-        else:
-            payout = amount  # entry=0 ise orjinal miktari geri ver
-
-        pnl = payout - amount
-
-        pos["status"] = "won" if pnl >= 0 else "lost"
-        pos["pnl"] = round(pnl, 4)
-        pos["payout"] = round(payout, 4)
-        pos["sell_price"] = round(current_price, 4)
-        pos["resolved_at"] = datetime.now(timezone.utc).isoformat()
-        pos["outcome"] = f"SOLD@{current_price:.3f}"
 
         self.balance += payout
         self.closed_trades.append(pos)
@@ -1434,9 +1400,14 @@ class AutoTrader:
 
     async def auto_resolve_positions(self):
         """
-        Acik pozisyonlari CLOB fiyat degisimine gore otomatik resolve et.
-        TUM pozisyon tipleri (btc, metals, weather) ayni sistemi kullanir.
-        ZORUNLU KURAL: Maksimum 60 dakika (1 saat) sonra zorla kapatilir.
+        Acik pozisyonlari gercek verilere gore otomatik resolve et.
+
+        ONEMLI KURALLAR:
+        - BTC pozisyonlari: Sadece market_price guncellenmisse VE
+          gercek fiyat hedefe kesin olarak ulasmis/ulasmamissa resolve et
+        - Weather pozisyonlari: Sadece hava olayi gerceklesmisse resolve et
+        - Gelecek tahmini marketleri (end_date uzaksa) HEMEN resolve edilmez
+        - Minimum bekleme suresi: 10 dakika (kisa vadeli marketler icin)
         """
         if not self.auto_resolve_enabled:
             return 0
@@ -1447,24 +1418,108 @@ class AutoTrader:
 
         for pos in positions_copy:
             try:
+                pos_type = pos.get("type", "")
+                market_name = pos.get("market", "").lower()
                 entry_time = pos.get("ts", "")
-                age_minutes = 0
 
-                # Pozisyon yasi hesapla
+                # Pozisyon en az 10 dakika acik olmali
                 if entry_time:
                     try:
                         entry_dt = datetime.fromisoformat(entry_time)
                         age_minutes = (now - entry_dt).total_seconds() / 60
-                        if age_minutes < 5:
-                            continue  # 5 dakikadan yeni, atla
+                        if age_minutes < 10:
+                            continue  # Cok yeni, atla
                     except (ValueError, TypeError):
                         age_minutes = 0
 
-                # TUM pozisyonlar icin CLOB fiyat degisimine gore resolve
-                await self._resolve_by_price_change(pos, age_minutes)
-                if pos["id"] not in [p["id"] for p in self.sim.positions]:
-                    resolved += 1
-                    self.auto_resolves += 1
+                # Market end_date kontrolu - end_date cok uzaksa resolve etme
+                end_date_str = pos.get("end_date", "")
+                if end_date_str:
+                    try:
+                        end_dt = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
+                        days_until_end = (end_dt - now).days
+                        # End date 7 gundan uzaksa, CLOB fiyat degisimi ile resolve et
+                        if days_until_end > 7:
+                            # Uzun vadeli market: sadece CLOB fiyat degisimi ile resolve
+                            await self._resolve_by_price_change(pos, age_minutes)
+                            if pos["id"] not in [p["id"] for p in self.sim.positions]:
+                                resolved += 1
+                                self.auto_resolves += 1
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+
+                outcome = None
+
+                if pos_type == "btc":
+                    # BTC: Gercek fiyat hedef kontrolu
+                    prices = self.stats.get("last_btc_prices", {})
+                    if not prices:
+                        prices = await self.price_agg.get_all_prices()
+
+                    if prices:
+                        avg_price = sum(prices.values()) / len(prices)
+                        target = self.btc_engine.extract_btc_target(pos.get("market", ""))
+
+                        if target and target > 100:  # Gecerli bir hedef olmali
+                            is_exceed = any(w in market_name for w in
+                                          ["exceed", "above", "over", "reach", "hit", "higher"])
+                            is_below = any(w in market_name for w in
+                                          ["below", "under", "drop", "fall", "lower"])
+
+                            # Sadece hedef kesin olarak gecildiyse/gecilmediyse resolve et
+                            if is_exceed:
+                                if avg_price >= target * 1.005:  # %0.5 margin
+                                    outcome = "YES"
+                                elif avg_price < target * 0.95 and age_minutes > 30:
+                                    outcome = "NO"  # Hedeften %5+ uzaksa ve 30dk gecmisse
+                            elif is_below:
+                                if avg_price <= target * 0.995:
+                                    outcome = "YES"
+                                elif avg_price > target * 1.05 and age_minutes > 30:
+                                    outcome = "NO"
+
+                elif pos_type == "weather":
+                    # Weather: NOAA gercek verisi ile resolve
+                    if age_minutes < 15:
+                        continue  # Hava durumu icin en az 15dk bekle
+
+                    forecasts = self.stats.get("last_weather_data", [])
+                    if forecasts:
+                        for fc in forecasts:
+                            if fc and fc.get("city", "").lower() in market_name:
+                                temp_range = self.weather_engine.parse_temp_range(pos.get("market", ""))
+                                if temp_range:
+                                    low, high = temp_range
+                                    actual_temp = fc["max_temp_f"]
+                                    # Kesin olarak aralik icinde/disinda mi?
+                                    if actual_temp >= low + 2 and actual_temp <= high - 2:
+                                        outcome = "YES"  # Kesinlikle aralik icinde
+                                    elif actual_temp < low - 3 or actual_temp > high + 3:
+                                        outcome = "NO"  # Kesinlikle disinda
+                                break
+
+                elif pos_type == "metals":
+                    # Metals: Fiyat degisimi ile resolve
+                    await self._resolve_by_price_change(pos, age_minutes)
+                    if pos["id"] not in [p["id"] for p in self.sim.positions]:
+                        resolved += 1
+                        self.auto_resolves += 1
+                    continue
+
+                if outcome:
+                    result = self.sim.resolve_position(pos["id"], outcome)
+                    if "error" not in result:
+                        resolved += 1
+                        self.auto_resolves += 1
+                        pnl = result.get("pnl", 0)
+                        status = result.get("status", "unknown")
+                        self._log_cycle(
+                            f"AUTO-RESOLVE: {pos['market'][:40]} -> {outcome} | "
+                            f"{status} | PnL: ${pnl:.2f}",
+                            "success" if pnl > 0 else "warning"
+                        )
+                        log.info(f"[AUTO] Resolve: {pos['id']} -> {outcome} | PnL: ${pnl:.2f}")
 
             except Exception as e:
                 log.error(f"[AUTO] Resolve error for {pos.get('id', '?')}: {e}")
@@ -1474,15 +1529,12 @@ class AutoTrader:
     async def _resolve_by_price_change(self, pos: dict, age_minutes: float):
         """
         CLOB'dan GERCEK guncel fiyat cekip entry_price ile karsilastir.
-        Kademeliesiksistemi:
-          - Market settled: token fiyati >=0.90 veya <=0.10 -> hemen resolve
-          - Take profit: %20+ lehimize ve 20dk+ -> WIN
-          - Stop loss: %25+ aleyhimize ve 20dk+ -> LOSE
-          - Orta sinyal: %15+ degisim ve 2 saat+ -> resolve
-          - Zaman asimi: 6 saat+ -> esik %10'a duser, 24 saat+ -> zorla resolve
-          - End_date gecmisse -> zorla resolve
+        - Fiyat entry_price'dan %30+ lehimize degismisse: resolve et (WIN)
+        - Fiyat entry_price'dan %30+ aleyhimize degismisse: resolve et (LOSE)
+        - End_date gecmisse zorla resolve et (market sonuclandi)
+        - Hicbiri yoksa: bekle, rastgele resolve YAPMA
         """
-        if age_minutes < 10:
+        if age_minutes < 15:
             return  # Cok yeni, atla
 
         side = pos.get("side", "YES")
@@ -1491,12 +1543,13 @@ class AutoTrader:
         # End date gecmis mi? (Market sonuclandi)
         end_date_str = pos.get("end_date", "")
         now = datetime.now(timezone.utc)
-        end_date_passed = False
         if end_date_str:
             try:
                 end_dt = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
                 if now > end_dt:
-                    end_date_passed = True
+                    # Market bitti - CLOB fiyatina gore sonuclandir
+                    # Polymarket'te kapanan marketler 0.99/0.01'e gider
+                    pass  # Asagida fiyat kontrolu yapacak
             except (ValueError, TypeError):
                 pass
 
@@ -1504,7 +1557,6 @@ class AutoTrader:
         token_id = pos.get("token_id", "") if side == "YES" else pos.get("no_token_id", "")
         if not token_id:
             # token_id yok, resolve yapamayiz
-            log.info(f"[AUTO] {pos['id']} token_id yok, resolve atilaniliyor")
             return
 
         try:
@@ -1514,105 +1566,41 @@ class AutoTrader:
             return
 
         if current_price <= 0:
-            log.info(f"[AUTO] {pos['id']} CLOB fiyat alinamadi (price={current_price}), atlaniyor")
             return  # Fiyat alinamadi, atla
 
         # Fiyat degisim analizi
         if entry_price <= 0:
-            log.info(f"[AUTO] {pos['id']} entry_price=0, atlaniyor")
             return
 
-        # price_change: pozitif = token fiyati artti (lehimize)
-        price_change = (current_price - entry_price) / entry_price
+        price_change = (current_price - entry_price) / entry_price  # Pozitif = lehimize
 
-        # Market neredeyse sonuclandi mi?
-        # ONEMLI: Dusuk fiyatli long-shot bahisler (entry<0.15) icin
-        # market_resolved_no esigi uygulanmaz - cunku zaten dusuk fiyatla girilmis
-        market_resolved_yes = current_price >= 0.90
-        # Sadece entry_price yuksekse (>0.15) market_resolved_no uygula
-        # Yoksa dusuk fiyatli tokenleri yanlis kapatir
-        market_resolved_no = current_price <= 0.05 and entry_price > 0.15
+        # Market neredeyse sonuclandi mi? (0.95+ veya 0.05- fiyat)
+        market_resolved_yes = current_price >= 0.95
+        market_resolved_no = current_price <= 0.05
 
         outcome = None
         resolve_reason = ""
 
         if market_resolved_yes:
-            # Token neredeyse $1 = bu token'in side'i kazandi
-            outcome = side  # Bizim token yukseldiyse BIZ kazandik
-            resolve_reason = f"Market {side}'a yaklasti (price={current_price:.3f})"
+            # Token neredeyse $1 = YES kazandi
+            outcome = "YES"
+            resolve_reason = f"Market YES'e yaklasti (price={current_price:.3f})"
         elif market_resolved_no:
-            # Token neredeyse $0 VE giris fiyati yuksekti = gercekten deger kaybetti
-            outcome = "NO" if side == "YES" else "YES"  # Karsitaraf kazandi
-            resolve_reason = f"Token degerini kaybetti (price={current_price:.3f}, entry={entry_price:.3f})"
-        elif end_date_passed:
-            # Market bitmis - mevcut fiyattan sat
-            result = self.sim.sell_position(pos["id"], current_price)
-            if "error" not in result:
-                pnl = result.get("pnl", 0)
-                self._log_cycle(
-                    f"END-DATE SELL: {pos['market'][:40]} | PnL: ${pnl:.4f} | "
-                    f"(entry={entry_price:.3f} -> sell={current_price:.3f})",
-                    "success" if pnl >= 0 else "warning"
-                )
-                log.info(f"[AUTO] END-DATE SELL: {pos['id']} | PnL: ${pnl:.4f}")
-            return
-        else:
-            # ZORUNLU KAPANIŞ: 60 dakika (1 saat) sonra mevcut fiyattan sat
-            if age_minutes >= 60:
-                # sell_position ile gercekci PnL hesapla (binary degil)
-                result = self.sim.sell_position(pos["id"], current_price)
-                if "error" not in result:
-                    pnl = result.get("pnl", 0)
-                    status = result.get("status", "unknown")
-                    self._log_cycle(
-                        f"1H-SELL: {pos['market'][:40]} | {status} | PnL: ${pnl:.4f} | "
-                        f"change={price_change*100:+.1f}% (entry={entry_price:.3f} -> sell={current_price:.3f})",
-                        "success" if pnl >= 0 else "warning"
-                    )
-                    log.info(
-                        f"[AUTO] 1H-SELL: {pos['id']} | PnL: ${pnl:.4f} | "
-                        f"entry={entry_price:.3f} sell={current_price:.3f} change={price_change*100:+.1f}%"
-                    )
-                return  # sell_position zaten islem yapti, asagiya gerek yok
-            # Kademeli esik sistemi (60 dk altı)
-            elif age_minutes >= 40:  # 40-60 dk
-                tp_threshold = 0.05   # %5 kar al
-                sl_threshold = 0.08   # %8 zarar kes
-                resolve_reason_prefix = "40m+"
-            elif age_minutes >= 20:   # 20-40 dk
-                tp_threshold = 0.10   # %10 kar al
-                sl_threshold = 0.15   # %15 zarar kes
-                resolve_reason_prefix = "20m+"
+            # Token neredeyse $0 = NO kazandi
+            outcome = "NO"
+            resolve_reason = f"Market NO'ya yaklasti (price={current_price:.3f})"
+        elif abs(price_change) >= 0.40 and age_minutes >= 60:
+            # 1 saat+ gecmis ve fiyat %40+ degismis - guclu sinyal
+            if price_change > 0:
+                outcome = "YES"  # Fiyat yukari -> YES kazanma olasiligi yuksek
+                resolve_reason = f"Fiyat %{price_change*100:.0f} artti (entry={entry_price:.3f} -> now={current_price:.3f})"
             else:
-                # 10-20 dk arasi -> sadece büyük hareketlerde
-                tp_threshold = 0.20
-                sl_threshold = 0.25
-                resolve_reason_prefix = "10m+"
-
-            # outcome henuz set edilmediyse (60dk force-close degilse) esik kontrol et
-            if outcome is None:
-                if price_change >= tp_threshold:
-                    # Fiyat lehimize gitti -> BIZ kazandik
-                    outcome = side
-                    resolve_reason = (
-                        f"{resolve_reason_prefix} Take Profit: fiyat %{price_change*100:.0f} artti "
-                        f"(entry={entry_price:.3f} -> now={current_price:.3f})"
-                    )
-                elif price_change <= -sl_threshold:
-                    # Fiyat aleyhimize gitti -> BIZ kaybettik
-                    outcome = "NO" if side == "YES" else "YES"
-                    resolve_reason = (
-                        f"{resolve_reason_prefix} Stop Loss: fiyat %{abs(price_change)*100:.0f} dustu "
-                        f"(entry={entry_price:.3f} -> now={current_price:.3f})"
-                    )
-                else:
-                    # Yeterli sinyal yok - BEKLE
-                    log.info(
-                        f"[AUTO] {pos['id']} bekleniyor: {side} price={current_price:.3f} "
-                        f"change={price_change*100:+.1f}% age={age_minutes:.0f}m "
-                        f"(tp={tp_threshold*100:.0f}% sl={sl_threshold*100:.0f}%)"
-                    )
-                    return
+                outcome = "NO"
+                resolve_reason = f"Fiyat %{abs(price_change)*100:.0f} dustü (entry={entry_price:.3f} -> now={current_price:.3f})"
+        else:
+            # Yeterli sinyal yok - BEKLE, rastgele resolve YAPMA
+            log.debug(f"[AUTO] {pos['id']} bekleniyor: price={current_price:.3f} change={price_change*100:.1f}% age={age_minutes:.0f}m")
+            return
 
         if outcome:
             result = self.sim.resolve_position(pos["id"], outcome)
@@ -1682,17 +1670,9 @@ class AutoTrader:
         except Exception as e:
             log.warning(f"[AUTO] NOAA error: {e}")
 
-        # 4) Firsatlari birlestir ve EV (Expected Value) bazli sirala
+        # 4) Firsatlari birlestir ve sirala
         all_opps = weather_opps + btc_opps + metals_opps
-        # EV = edge * confidence * (1 - spread_penalty) * liquidity_bonus
-        def ev_score(opp):
-            e = abs(opp["edge"])
-            conf = opp.get("confidence", 0.7)
-            spread = opp.get("ob_spread", 0.05)
-            spread_penalty = min(spread * 5, 0.5)  # max %50 ceza
-            liquid_bonus = 1.1 if opp.get("is_liquid", False) else 0.8
-            return e * conf * (1 - spread_penalty) * liquid_bonus
-        all_opps.sort(key=ev_score, reverse=True)
+        all_opps.sort(key=lambda x: abs(x["edge"]), reverse=True)
         self.stats["last_opportunities"] = all_opps
         self.stats["metals_bets"] = self.stats.get("metals_bets", 0)
 
@@ -1722,45 +1702,7 @@ class AutoTrader:
             if edge < self.min_edge_auto:
                 continue
 
-            # --- GÜÇLÜ BAHİS FİLTRESİ ---
-            # 1) Likidite kontrolü: market likit olmalı
-            if not opp.get("is_liquid", True):
-                self._log_cycle(f"SKIP (likit degil): {opp['market'][:40]}")
-                continue
-
-            # 2) Spread kontrolü: orderbook spread çok geniş olmamalı
-            ob_spread = opp.get("ob_spread", 0)
-            if ob_spread > 0.10:  # %10'dan fazla spread riskli
-                self._log_cycle(f"SKIP (spread cok genis {ob_spread:.1%}): {opp['market'][:40]}")
-                continue
-
-            # 3) Confidence kontrolü (metals için): en az %30 güven
-            confidence = opp.get("confidence", 1.0)
-            if opp["type"] == "metals" and confidence < 0.30:
-                self._log_cycle(f"SKIP (dusuk confidence {confidence:.0%}): {opp['market'][:40]}")
-                continue
-
-            # 4) Çok düşük fiyatlı tokenlarda dikkatli ol (penny bet riski)
-            market_price = opp.get("market_price", 0.5)
-            if market_price < 0.02 or market_price > 0.98:
-                # Çok uç fiyatlar - bunlar genelde "neredeyse kesin" marketler
-                # Edge yüksek görünür ama gerçekte çok riskli
-                if edge < 0.25:  # Edge %25'ten az ise atla
-                    self._log_cycle(f"SKIP (uc fiyat {market_price:.3f}, edge yetersiz): {opp['market'][:40]}")
-                    continue
-
-            # 5) Market bitiş tarihi filtresi - devre dışı
-            # Pozisyonlar max 1 saat açık kalıyor, market bitiş tarihi önemli değil
-            # Bot kısa vadeli fiyat hareketlerinden kazanç sağlıyor
-
             real_prob = opp.get("noaa_prob") or opp.get("real_prob", 0.5)
-
-            # 6) Güçlü olasılık filtresi: gerçek olasılık çok belirsiz olmamalı
-            # %35-%65 arası "belirsiz bölge" - burada bahis riskli
-            if 0.35 <= real_prob <= 0.65 and edge < 0.20:
-                self._log_cycle(f"SKIP (belirsiz olasilik {real_prob:.0%}): {opp['market'][:40]}")
-                continue
-
             bet_size = self.calculate_bet_size(opp["edge"], real_prob)
             if bet_size < 0.50:
                 continue

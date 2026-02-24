@@ -20,15 +20,12 @@ from aiohttp import web
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-# Versiyon dosyasından oku
-VERSION_FILE = PROJECT_ROOT / "VERSION"
-APP_VERSION = VERSION_FILE.read_text().strip() if VERSION_FILE.exists() else "1.0.0"
-
 from bot import (
     CFG, PolymarketClient, PriceAggregator, NOAAClient,
     WeatherArbEngine, BTCArbEngine, MetalsArbEngine, GeneralMarketScanner,
     SimulationEngine, AutoTrader, DATA_DIR, LOG_DIR
 )
+
 from telegram_bot import get_telegram_bot
 
 import logging
@@ -44,13 +41,9 @@ btc_engine = BTCArbEngine()
 metals_engine = MetalsArbEngine()
 scanner = GeneralMarketScanner()
 cached_data = {"markets": [], "btc_prices": {}, "weather": {}, "metals": {}, "opportunities": [], "last_update": None}
-# PnL time series
+# PnL zaman serisi
 pnl_history = []
 MAX_PNL_HISTORY = 500
-
-# Telegram bot
-tg_bot = get_telegram_bot()
-tg_bot.set_engines(sim_engine, auto_trader, None)
 
 
 def record_pnl_snapshot():
@@ -245,7 +238,7 @@ async def handle_api_status(request):
     return web.json_response({
         "status": "online",
         "mode": "simulation" if CFG.simulation_mode else "live",
-        "version": APP_VERSION,
+        "version": "3.0",
         "uptime": datetime.now(timezone.utc).isoformat(),
         "auto_trader_running": auto_trader.running,
         "config": {
@@ -259,10 +252,22 @@ async def handle_api_status(request):
 
 
 async def handle_api_portfolio(request):
-    """Portfolio ozeti"""
+    """Portfolio ozeti — unrealized PnL ile"""
     summary = sim_engine.get_portfolio_summary()
     summary["positions"] = sim_engine.positions
     summary["recent_trades"] = sim_engine.closed_trades[-20:]
+
+    # Unrealized PnL hesapla (live cache'den)
+    try:
+        unrealized = sum(
+            lp.get("unrealized_pnl", 0)
+            for lp in live_cache.position_prices.values()
+        )
+        summary["unrealized_pnl"] = round(unrealized, 4)
+        summary["total_pnl"] = round(summary["realized_pnl"] + unrealized, 4)
+    except Exception:
+        pass
+
     return web.json_response(summary)
 
 
@@ -414,7 +419,8 @@ async def handle_api_place_bet(request):
             return web.json_response(result, status=400)
 
         # Telegram notification
-        asyncio.ensure_future(tg_bot.notify_new_bet(result))
+        tg = get_telegram_bot()
+        asyncio.ensure_future(tg.notify_new_bet(result))
 
         return web.json_response({
             "success": True,
@@ -437,7 +443,8 @@ async def handle_api_resolve(request):
             return web.json_response(result, status=400)
 
         # Telegram notification
-        asyncio.ensure_future(tg_bot.notify_resolve(result, sim_engine.balance))
+        tg = get_telegram_bot()
+        asyncio.ensure_future(tg.notify_resolve(result, sim_engine.balance))
 
         return web.json_response({
             "success": True,
@@ -555,11 +562,12 @@ async def handle_auto_config(request):
 
 
 async def handle_auto_scan_now(request):
-    """Run a single scan cycle (independent from AutoTrader loop)"""
+    """Tek seferlik tarama yap (AutoTrader loop'undan bagimsiz)"""
     try:
         result = await auto_trader.run_scan_cycle()
         # Telegram notification
-        asyncio.ensure_future(tg_bot.notify_scan_complete(result))
+        tg = get_telegram_bot()
+        asyncio.ensure_future(tg.notify_scan_complete(result))
         return web.json_response(result)
     except Exception as e:
         log.error(f"Manual scan error: {e}")
@@ -651,44 +659,55 @@ async def handle_websocket(request):
 
 async def ws_broadcast_task(app):
     """WebSocket broadcast gorevi - her 3sn canli veri gonder"""
-    global _ws_clients
     while True:
         try:
             await asyncio.sleep(3)
-            if not _ws_clients:
-                continue
 
-            # Record PnL snapshot every ~30s
+            # Her 30sn'de PnL snapshot kaydet (client olsun olmasin)
             if live_cache.tick_count % 10 == 0:
                 try:
                     record_pnl_snapshot()
                 except Exception:
                     pass
 
+            # Client yoksa veri toplamayı atla
+            if not _ws_clients:
+                continue
+
             data = await live_cache.get_live_data()
             summary = sim_engine.get_portfolio_summary()
+            # Unrealized PnL live cache'den
+            try:
+                unrealized = sum(
+                    lp.get("unrealized_pnl", 0) for lp in live_cache.position_prices.values()
+                )
+                summary["unrealized_pnl"] = round(unrealized, 4)
+                summary["total_pnl"] = round(summary["realized_pnl"] + unrealized, 4)
+            except Exception:
+                pass
             data["portfolio_full"] = summary
             data["positions"] = sim_engine.positions
-            data["position_prices"] = live_cache.position_prices  # canlı pozisyon fiyatları
+            data["position_prices"] = live_cache.position_prices
             data["auto_status"] = {
                 "running": auto_trader.running,
                 "scan_count": auto_trader.scan_count,
                 "auto_bets": auto_trader.auto_bets_placed,
                 "auto_resolves": auto_trader.auto_resolves,
                 "next_scan": auto_trader.next_scan_time,
+                "scan_interval": auto_trader.scan_interval,
                 "daily_spent": round(auto_trader.daily_spent, 2),
                 "last_logs": auto_trader.stats.get("cycle_log", [])[-5:],
                 "last_opportunities": auto_trader.stats.get("last_opportunities", [])[:10],
             }
 
             msg = json.dumps({"type": "live_update", "data": data}, default=str)
-            dead = set()
-            for ws in list(_ws_clients):
+            # _ws_clients -= dead yerine discard() kullan — global scope hatasi olmaz
+            for client in list(_ws_clients):
                 try:
-                    await ws.send_str(msg)
+                    await client.send_str(msg)
                 except Exception:
-                    dead.add(ws)
-            _ws_clients -= dead
+                    _ws_clients.discard(client)
+
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -697,32 +716,26 @@ async def ws_broadcast_task(app):
 
 async def start_ws_broadcast(app):
     load_pnl_history()
-    record_pnl_snapshot()  # Initial snapshot
+    record_pnl_snapshot()  # İlk snapshot
     app["ws_task"] = asyncio.ensure_future(ws_broadcast_task(app))
 
-    # Start Telegram bot polling
-    tg_bot.set_engines(sim_engine, auto_trader, live_cache)
-    tg_polling = tg_bot.start_polling()
-    if tg_polling:
-        app["tg_task"] = tg_polling
+    # Telegram bot başlat
+    tg = get_telegram_bot()
+    tg.set_engines(sim_engine, auto_trader, live_cache)
+    tg.start_polling()
+    log.info("Telegram bot polling started" if tg.enabled else "Telegram bot disabled")
 
 
 async def stop_ws_broadcast(app):
+    # Telegram bot durdur
+    tg = get_telegram_bot()
+    tg.stop_polling()
+
     task = app.get("ws_task")
     if task:
         task.cancel()
         try:
             await task
-        except asyncio.CancelledError:
-            pass
-
-    # Stop Telegram bot
-    tg_bot.stop_polling()
-    tg_task = app.get("tg_task")
-    if tg_task:
-        tg_task.cancel()
-        try:
-            await tg_task
         except asyncio.CancelledError:
             pass
 
