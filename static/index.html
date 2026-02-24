@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="tr">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -10,7 +10,7 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
-  /* Arka plan — derin koyu, lacivertsiz nötr */
+  /* Background — deep dark neutral */
   --bg:#09090f;--bg2:#0f0f18;--bg3:#141420;--bg4:#1a1a28;--surface:#20202e;
   --border:#252535;--border2:#303048;
   --text:#f2f0ff;--text2:#8b889e;--text3:#454360;
@@ -24,7 +24,7 @@
   --rose:#fb7185;--rdose:rgba(251,113,133,.12);
   --teal:#2dd4bf;--tdim:rgba(45,212,191,.12);
 
-  /* Accent (tab aktif, link vb) — yeşil-teal */
+  /* Accent (active tab, links etc) — green-teal */
   --blue:var(--teal);--bdim:var(--tdim);--bglow:var(--gglow);
   --purple:var(--violet);--pdim:var(--vdim);
 
@@ -469,11 +469,11 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13
     </div>
     <div class="tb-metric">
       <div class="tb-val" id="tb_pnl">$—</div>
-      <div class="tb-key">GÜNLÜK P&amp;L</div>
+      <div class="tb-key">DAILY P&amp;L</div>
     </div>
     <div class="tb-metric">
       <div class="tb-val" style="color:var(--amber)" id="tb_open">—</div>
-      <div class="tb-key">AÇIK POZ.</div>
+      <div class="tb-key">OPEN POS.</div>
     </div>
     <div class="tb-metric">
       <div class="tb-val y" id="tb_btc">$—</div>
@@ -486,7 +486,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13
   </div>
 
   <div class="tb-right">
-    <div class="ws-pill" id="wsPill"><div class="dot"></div><span id="wsLbl">BAĞLANIYOR</span></div>
+    <div class="ws-pill" id="wsPill"><div class="dot"></div><span id="wsLbl">CONNECTING</span></div>
     <div class="clock" id="clockEl">—</div>
   </div>
 </header>
@@ -498,10 +498,10 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13
 
   <!-- Balance -->
   <div class="sb-section">
-    <div class="sb-label">Portföy</div>
+    <div class="sb-label">Portfolio</div>
     <div class="bal-card">
       <div class="bal-amount" id="sb_bal">$0.00</div>
-      <div class="bal-label">Toplam Bakiye</div>
+      <div class="bal-label">Total Balance</div>
       <div class="bal-row">
         <div class="bal-stat">
           <div class="bal-stat-val g" id="sb_real">$0</div>
@@ -513,7 +513,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13
         </div>
         <div class="bal-stat">
           <div class="bal-stat-val y" id="sb_inv">$0</div>
-          <div class="bal-stat-key">YATIRIM</div>
+          <div class="bal-stat-key">INVESTED</div>
         </div>
       </div>
     </div>
@@ -538,17 +538,17 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13
       </div>
       <div class="wr-list">
         <div class="wr-row">
-          <span class="wr-row-key">Karlı</span>
+          <span class="wr-row-key">Wins</span>
           <span class="wr-row-val g" id="wr_w">0</span>
         </div>
         <div class="wr-bar-wrap"><div class="wr-bar-fill" id="wr_wbar" style="width:0%;background:var(--green)"></div></div>
         <div class="wr-row">
-          <span class="wr-row-key">Zararlı</span>
+          <span class="wr-row-key">Losses</span>
           <span class="wr-row-val r" id="wr_l">0</span>
         </div>
         <div class="wr-bar-wrap"><div class="wr-bar-fill" id="wr_lbar" style="width:0%;background:var(--red)"></div></div>
         <div class="wr-row">
-          <span class="wr-row-key">Açık</span>
+          <span class="wr-row-key">Open</span>
           <span class="wr-row-val b" id="wr_o">0</span>
         </div>
       </div>
@@ -557,11 +557,11 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13
 
   <!-- BTC Ticker -->
   <div class="sb-section">
-    <div class="sb-label">BTC Canlı Fiyat</div>
+    <div class="sb-label">BTC Live Price</div>
     <div class="btc-sub">
       <div>
         <div class="btc-price-main" id="btcMain">$—</div>
-        <div class="btc-avg-label">5 Borsa Ort.</div>
+        <div class="btc-avg-label">5 Exchange Avg.</div>
       </div>
       <div class="btc-spread-val" id="btcSpread">spread: —</div>
     </div>
@@ -576,34 +576,34 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13
       <div class="auto-head">
         <div class="auto-head-title">
           <div class="status-dot" id="statusDot"></div>
-          <span>Otomatik Tarama</span>
+          <span>Auto Scanner</span>
         </div>
-        <span class="status-label off" id="statusLbl">DURDU</span>
+        <span class="status-label off" id="statusLbl">STOPPED</span>
       </div>
       <div class="auto-body">
         <div class="auto-grid">
-          <div class="ag-cell"><div class="ag-val" id="as_sc">0</div><div class="ag-key">TARAMA</div></div>
-          <div class="ag-cell"><div class="ag-val" id="as_bt">0</div><div class="ag-key">OTO BET</div></div>
+          <div class="ag-cell"><div class="ag-val" id="as_sc">0</div><div class="ag-key">SCANS</div></div>
+          <div class="ag-cell"><div class="ag-val" id="as_bt">0</div><div class="ag-key">AUTO BET</div></div>
           <div class="ag-cell"><div class="ag-val" id="as_rv">0</div><div class="ag-key">RESOLVE</div></div>
-          <div class="ag-cell"><div class="ag-val y" id="as_dy">$0</div><div class="ag-key">GÜNLÜK</div></div>
+          <div class="ag-cell"><div class="ag-val y" id="as_dy">$0</div><div class="ag-key">DAILY</div></div>
         </div>
         <div class="scan-row">
-          <span>Sonraki tarama</span>
+          <span>Next scan</span>
           <span class="scan-time" id="scanLbl">—</span>
         </div>
         <div class="prog-track"><div class="prog-fill" id="progFill" style="width:0%"></div></div>
         <div class="cfg-row">
-          <span class="cfg-lbl">İNTERVAL:</span>
+          <span class="cfg-lbl">INTERVAL:</span>
           <input class="cfg-inp" type="number" id="cfgInt" value="300" min="30">
           <span class="cfg-lbl">EDGE%:</span>
           <input class="cfg-inp" type="number" id="cfgEdge" value="15" min="1">
         </div>
         <div class="btn-row">
-          <button class="btn btn-go" onclick="startAuto()">▶ BAŞLAT</button>
-          <button class="btn btn-halt" onclick="stopAuto()">■ DURDUR</button>
+          <button class="btn btn-go" onclick="startAuto()">▶ START</button>
+          <button class="btn btn-halt" onclick="stopAuto()">■ STOP</button>
         </div>
         <div class="btn-row" style="margin-top:5px">
-          <button class="btn btn-scan" onclick="scanNow()"><span id="scanIcon">⟳</span> ŞİMDİ TARA</button>
+          <button class="btn btn-scan" onclick="scanNow()"><span id="scanIcon">⟳</span> SCAN NOW</button>
           <button class="btn btn-reset" onclick="resetSim()">RESET</button>
         </div>
       </div>
@@ -619,32 +619,32 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13
   <div class="daily-strip">
     <div class="ds-item">
       <div class="ds-val b" id="ds_start">$—</div>
-      <div class="ds-key">Gün Başı Bakiye</div>
+      <div class="ds-key">Start Balance</div>
     </div>
     <div class="ds-item">
       <div class="ds-val" id="ds_pnl">$—</div>
-      <div class="ds-key">Toplam P&amp;L</div>
+      <div class="ds-key">Total P&amp;L</div>
     </div>
     <div class="ds-item">
       <div class="ds-val g" id="ds_wins">0</div>
-      <div class="ds-key">Karlı İşlem</div>
+      <div class="ds-key">Winning</div>
     </div>
     <div class="ds-item">
       <div class="ds-val r" id="ds_losses">0</div>
-      <div class="ds-key">Zararlı İşlem</div>
+      <div class="ds-key">Losing</div>
     </div>
     <div class="ds-item">
       <div class="ds-val y" id="ds_invest">$—</div>
-      <div class="ds-key">Toplam Yatırım</div>
+      <div class="ds-key">Total Invested</div>
     </div>
   </div>
 
   <!-- Tab Strip -->
   <div class="tab-strip">
-    <button class="tab active" onclick="showTab('chart',this)">📈 PNL GRAFİĞİ</button>
-    <button class="tab" onclick="showTab('opps',this)">🎯 FIRSATLAR <span class="tab-badge" id="tc_opps">0</span></button>
-    <button class="tab" onclick="showTab('history',this)">📋 İŞLEM GEÇMİŞİ</button>
-    <button class="tab" onclick="showTab('logs',this)">📟 CANLI LOG</button>
+    <button class="tab active" onclick="showTab('chart',this)">📈 PNL CHART</button>
+    <button class="tab" onclick="showTab('opps',this)">🎯 OPPORTUNITIES <span class="tab-badge" id="tc_opps">0</span></button>
+    <button class="tab" onclick="showTab('history',this)">📋 TRADE HISTORY</button>
+    <button class="tab" onclick="showTab('logs',this)">📟 LIVE LOG</button>
   </div>
 
   <!-- Panels -->
@@ -653,22 +653,22 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13
     <!-- ─── CHART PANEL ─── -->
     <div class="panel active" id="panel-chart">
       <div class="kpi-strip">
-        <div class="kpi"><div class="kpi-val" style="color:var(--teal)" id="kpi_port">$—</div><div class="kpi-key">Portföy Değeri</div></div>
-        <div class="kpi"><div class="kpi-val" id="kpi_tpnl">$—</div><div class="kpi-key">Toplam PnL</div></div>
+        <div class="kpi"><div class="kpi-val" style="color:var(--teal)" id="kpi_port">$—</div><div class="kpi-key">Portfolio Value</div></div>
+        <div class="kpi"><div class="kpi-val" id="kpi_tpnl">$—</div><div class="kpi-key">Total PnL</div></div>
         <div class="kpi"><div class="kpi-val g" id="kpi_real">$—</div><div class="kpi-key">Realized</div></div>
         <div class="kpi"><div class="kpi-val" style="color:var(--teal)" id="kpi_unreal">$—</div><div class="kpi-key">Unrealized</div></div>
-        <div class="kpi"><div class="kpi-val y" id="kpi_open">—</div><div class="kpi-key">Açık Pozisyon</div></div>
+        <div class="kpi"><div class="kpi-val y" id="kpi_open">—</div><div class="kpi-key">Open Positions</div></div>
         <div class="kpi"><div class="kpi-val" id="kpi_wr">—%</div><div class="kpi-key">Win Rate</div></div>
       </div>
 
       <div class="chart-card">
         <div class="chart-card-hdr">
-          <div class="chart-card-title">PORTFÖY PNL — ZAMAN SERİSİ</div>
+          <div class="chart-card-title">PORTFOLIO PNL — TIME SERIES</div>
           <div class="period-row">
-            <button class="pbtn active" onclick="setPeriod('1h',this)">1S</button>
-            <button class="pbtn" onclick="setPeriod('6h',this)">6S</button>
-            <button class="pbtn" onclick="setPeriod('24h',this)">24S</button>
-            <button class="pbtn" onclick="setPeriod('all',this)">TÜMÜ</button>
+            <button class="pbtn active" onclick="setPeriod('1h',this)">1H</button>
+            <button class="pbtn" onclick="setPeriod('6h',this)">6H</button>
+            <button class="pbtn" onclick="setPeriod('24h',this)">24H</button>
+            <button class="pbtn" onclick="setPeriod('all',this)">ALL</button>
             <button class="pbtn" onclick="loadChart()">⟳</button>
           </div>
         </div>
@@ -677,7 +677,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13
 
       <div class="sub-grid">
         <div class="sub-chart-card">
-          <div class="sub-chart-title">Portföy Değeri</div>
+          <div class="sub-chart-title">Portfolio Value</div>
           <div class="sub-chart-wrap"><canvas id="portChart"></canvas></div>
         </div>
         <div class="sub-chart-card">
@@ -685,7 +685,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13
           <div class="sub-chart-wrap"><canvas id="breakChart"></canvas></div>
         </div>
         <div class="sub-chart-card">
-          <div class="sub-chart-title">Win Rate Trendi</div>
+          <div class="sub-chart-title">Win Rate Trend</div>
           <div class="sub-chart-wrap"><canvas id="wrChart"></canvas></div>
         </div>
       </div>
@@ -694,15 +694,15 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13
     <!-- ─── OPPORTUNITIES PANEL ─── -->
     <div class="panel" id="panel-opps">
       <div style="display:flex;justify-content:space-between;align-items:center">
-        <div style="font-family:var(--mono);font-size:10px;color:var(--text2);font-weight:600;letter-spacing:.06em">ARBİTRAJ FIRSATLARI — GERÇEK CLOB VERİLERİ</div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--text2);font-weight:600;letter-spacing:.06em">ARBITRAGE OPPORTUNITIES — LIVE CLOB DATA</div>
         <button class="btn btn-scan" style="flex:none;padding:7px 16px;font-size:10px" onclick="loadOpps()">
           <span class="spin" id="oppSpinner" style="display:none"></span>⟳ TARA
         </button>
       </div>
       <div class="opp-table-wrap">
         <table class="opp-table">
-          <thead><tr><th>Market</th><th>Tip</th><th>Gerçek %</th><th>Market %</th><th>Edge</th><th>Taraf</th><th>İşlem</th></tr></thead>
-          <tbody id="oppBody"><tr><td colspan="7" class="empty">Fırsatlar sekmesine tıklayın veya Auto Trader'ı başlatın</td></tr></tbody>
+          <thead><tr><th>Market</th><th>Type</th><th>Real %</th><th>Market %</th><th>Edge</th><th>Side</th><th>Action</th></tr></thead>
+          <tbody id="oppBody"><tr><td colspan="7" class="empty">Click Opportunities tab or start Auto Trader</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -711,8 +711,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13
     <div class="panel" id="panel-history">
       <div class="hist-table-wrap">
         <table class="hist-table">
-          <thead><tr><th>Zaman</th><th>Market</th><th>Taraf</th><th>Miktar</th><th>Giriş</th><th>Sonuç</th><th>PnL</th></tr></thead>
-          <tbody id="histBody"><tr><td colspan="7" class="empty">Henüz işlem yok</td></tr></tbody>
+          <thead><tr><th>Time</th><th>Market</th><th>Side</th><th>Amount</th><th>Entry</th><th>Result</th><th>PnL</th></tr></thead>
+          <tbody id="histBody"><tr><td colspan="7" class="empty">No trades yet</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -721,11 +721,11 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13
     <div class="panel" id="panel-logs">
       <div class="log-wrap">
         <div class="log-hdr">
-          <div class="log-hdr-title">CANLI BOT LOGU</div>
-          <button class="pbtn" onclick="document.getElementById('logFeed').innerHTML=''">Temizle</button>
+          <div class="log-hdr-title">LIVE BOT LOG</div>
+          <button class="pbtn" onclick="document.getElementById('logFeed').innerHTML=''">Clear</button>
         </div>
         <div class="log-feed" id="logFeed">
-          <div class="log-line">Sistem başlatılıyor...</div>
+          <div class="log-line">System starting...</div>
         </div>
       </div>
     </div>
@@ -738,21 +738,21 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13
 
   <div class="rail-section">
     <div class="rail-hdr">
-      <div class="rail-hdr-title">AÇIK POZİSYONLAR</div>
+      <div class="rail-hdr-title">OPEN POSITIONS</div>
       <span class="rail-badge open" id="rp_open">0</span>
     </div>
     <div class="pos-list" id="posListEl">
-      <div class="empty">Açık pozisyon yok</div>
+      <div class="empty">No open positions</div>
     </div>
   </div>
 
   <div class="rail-section" style="flex:1">
     <div class="rail-hdr">
-      <div class="rail-hdr-title">BİTEN BAHİSLER</div>
+      <div class="rail-hdr-title">CLOSED BETS</div>
       <span class="rail-badge closed" id="rp_closed">0</span>
     </div>
     <div class="closed-list" id="closedListEl">
-      <div class="empty">Henüz biten bahis yok</div>
+      <div class="empty">No closed bets yet</div>
     </div>
   </div>
 
@@ -778,13 +778,13 @@ let dailyStartBal=null;
 // ════════════════════════════════════════
 setInterval(()=>{
   const n=new Date();
-  document.getElementById('clockEl').textContent=n.toLocaleTimeString('tr-TR');
-  // Gece yarısı reset
+  document.getElementById('clockEl').textContent=n.toLocaleTimeString('en-US',{hour12:false});
+  // Midnight reset
   if(n.getHours()===0&&n.getMinutes()===0&&n.getSeconds()===0){
     const cur=parseFloat(document.getElementById('sb_bal').textContent.replace(/[$,]/g,''))||0;
     dailyStartBal=cur;
     try{localStorage.setItem('polyarb_daily',JSON.stringify({bal:cur,date:n.toDateString()}));}catch(e){}
-    log('🕛 Gün başı bakiyesi güncellendi: $'+cur.toFixed(2),'s');
+    log('🕛 Daily start balance updated: $'+cur.toFixed(2),'s');
   }
 },1000);
 
@@ -805,11 +805,11 @@ initDailyBalance();
 function connectWS(){
   const proto=location.protocol==='https:'?'wss':'ws';
   ws=new WebSocket(`${proto}://${location.host}/ws`);
-  ws.onopen=()=>{ setWS('live','CANLI'); log('✓ WebSocket bağlandı','s'); loadInit(); };
+  ws.onopen=()=>{ setWS('live','LIVE'); log('✓ WebSocket connected','s'); loadInit(); };
   ws.onmessage=e=>{ try{handle(JSON.parse(e.data));}catch(_){} };
   let delay=2000;
-  ws.onclose=()=>{ setWS('err','KESİLDİ'); log('⚠ Bağlantı kesildi...','w'); startPoll(); setTimeout(()=>{delay=Math.min(delay*1.5,15000);connectWS();},delay); };
-  ws.onerror=()=>{ setWS('err','HATA'); startPoll(); };
+  ws.onclose=()=>{ setWS('err','DISCONNECTED'); log('⚠ Connection lost...','w'); startPoll(); setTimeout(()=>{delay=Math.min(delay*1.5,15000);connectWS();},delay); };
+  ws.onerror=()=>{ setWS('err','ERROR'); startPoll(); };
 }
 let pollTmr=null;
 function startPoll(){
@@ -833,12 +833,12 @@ function handle(msg){
     if(d.auto_status?.last_opportunities?.length)renderOpps(d.auto_status.last_opportunities);
   }else if(msg.type==='scan_start'){
     document.getElementById('scanIcon').innerHTML='<span class="spin"></span>';
-    log('⟳ Tarama başladı...','w');
+    log('⟳ Scan started...','w');
   }else if(msg.type==='scan_result'){
     document.getElementById('scanIcon').textContent='⟳';
     const all=[...(msg.data.weather_opportunities||[]),...(msg.data.btc_opportunities||[]),...(msg.data.metals_opportunities||[])];
     if(all.length)renderOpps(all);
-    log(`✓ Tarama: ${msg.data.total_opportunities||0} fırsat bulundu`,'s');
+    log(`✓ Scan: ${msg.data.total_opportunities||0} opportunities found`,'s');
   }
 }
 function ll(l){return l==='success'?'s':l==='warning'?'w':l==='error'?'e':'';}
@@ -891,7 +891,7 @@ function drawBtcSpark(){
 }
 
 // ════════════════════════════════════════
-// PORTFOLIO — diffing, sayfa titremesi yok
+// PORTFOLIO — diffing, no page jitter
 // ════════════════════════════════════════
 function updatePortfolio(p){
   if(!p)return;
@@ -960,7 +960,7 @@ function updatePortfolio(p){
 // ════════════════════════════════════════
 // POSITIONS — RIGHT RAIL
 // ════════════════════════════════════════
-// ─── SMART DOM DIFFING: sadece değişen elementleri güncelle ───
+// ─── SMART DOM DIFFING: only update changed elements ───
 function setTxt(id, val){
   const el=document.getElementById(id);
   if(el&&el.textContent!==String(val)) el.textContent=val;
@@ -969,7 +969,7 @@ function setStyle(el, prop, val){
   if(el&&el.style[prop]!==val) el.style[prop]=val;
 }
 
-// Rakam değiştiğinde hafif flash efekti (glow, sayfa titremesi değil)
+// Light flash effect on number change (glow, no page jitter)
 function flashNum(el, newTxt, colorClass){
   if(!el||el.textContent===newTxt) return;
   el.textContent=newTxt;
@@ -985,7 +985,7 @@ function flashNum(el, newTxt, colorClass){
   });
 }
 
-// Kart HTML şablonu (sadece ilk oluşturmada kullanılır)
+// Card HTML template (used only for initial creation)
 function buildPosCard(pos, ld){
   const mid=pos.market_id||'';
   const lp=ld.price||0;
@@ -999,7 +999,7 @@ function buildPosCard(pos, ld){
   let daysLeft='';
   if(pos.end_date){
     const diff=Math.ceil((new Date(pos.end_date)-Date.now())/86400000);
-    daysLeft=diff>0?`${diff}g`:'SONA ERDİ';
+    daysLeft=diff>0?`${diff}d`:'EXPIRED';
   }
   const liquidity=ld.liquid?'<span style="color:var(--green);font-size:9px;margin-left:4px">●LIQ</span>':'';
   return `<div class="pos-card" id="pc_${pos.id}" data-mid="${mid}">
@@ -1011,13 +1011,13 @@ function buildPosCard(pos, ld){
       </div>
     </div>
     <div class="pos-stats">
-      <div class="ps"><div class="ps-val y">$${(pos.amount||0).toFixed(2)}</div><div class="ps-key">YATIRIM</div></div>
-      <div class="ps"><div class="ps-val">${(pos.entry_price||0).toFixed(3)}</div><div class="ps-key">GİRİŞ</div></div>
+      <div class="ps"><div class="ps-val y">$${(pos.amount||0).toFixed(2)}</div><div class="ps-key">INVESTED</div></div>
+      <div class="ps"><div class="ps-val">${(pos.entry_price||0).toFixed(3)}</div><div class="ps-key">ENTRY</div></div>
       <div class="ps"><div class="ps-val" style="color:${edgeCol}" id="edge_${pos.id}">${edge>=0?'+':''}${edge.toFixed(1)}%</div><div class="ps-key">EDGE</div></div>
-      <div class="ps"><div class="ps-val" id="days_${pos.id}" style="font-size:${daysLeft.length>4?'9px':'11px'};color:${daysLeft==='SONA ERDİ'?'var(--red)':'var(--text3)'}">${daysLeft||'—'}</div><div class="ps-key">SÜRE</div></div>
+      <div class="ps"><div class="ps-val" id="days_${pos.id}" style="font-size:${daysLeft.length>4?'9px':'11px'};color:${daysLeft==='EXPIRED'?'var(--red)':'var(--text3)'}">${daysLeft||'—'}</div><div class="ps-key">TIME</div></div>
     </div>
     <div class="pos-live">
-      <span class="pos-live-lbl">Canlı Fiyat${liquidity}</span>
+      <span class="pos-live-lbl">Live Price${liquidity}</span>
       <span class="pos-live-price" id="lp_${pos.id}">${lp>0?lp.toFixed(4):'—'}</span>
       <span class="pos-upnl" id="upnl_${pos.id}" style="color:${upnlColor}">${upnl!==undefined?(upnl>=0?'+':'')+'$'+Math.abs(upnl).toFixed(3):'—'}</span>
     </div>
@@ -1029,21 +1029,21 @@ function buildPosCard(pos, ld){
     <div class="pos-hover-detail">
       <div class="phd-inner">
         <div class="phd-item"><div class="phd-val">${pos.id}</div><div>ID</div></div>
-        <div class="phd-item"><div class="phd-val">${new Date(pos.ts||'').toLocaleTimeString('tr-TR')}</div><div>Açılış</div></div>
-        <div class="phd-item"><div class="phd-val">${pos.end_date?new Date(pos.end_date).toLocaleDateString('tr-TR'):'—'}</div><div>Bitiş</div></div>
+        <div class="phd-item"><div class="phd-val">${new Date(pos.ts||'').toLocaleTimeString('en-US')}</div><div>Opened</div></div>
+        <div class="phd-item"><div class="phd-val">${pos.end_date?new Date(pos.end_date).toLocaleDateString('en-US'):'—'}</div><div>End Date</div></div>
         <div class="phd-item"><div class="phd-val" id="spr_${pos.id}">${ld.spread!==undefined?ld.spread.toFixed(4):'—'}</div><div>Spread</div></div>
       </div>
     </div>
   </div>`;
 }
 
-// Sadece canlı değişen alanları güncelle (flash animasyonlu)
+// Update only live-changing fields (with flash animation)
 function patchPosCard(pos, ld){
   const mid=pos.market_id||'';
   const lp=ld.price||0;
   const upnl=ld.unrealized_pnl;
 
-  // Live price — tick animasyonu
+  // Live price — tick animation
   const lpEl=document.getElementById('lp_'+pos.id);
   if(lpEl){
     const prev=prevPrices[mid]||lp;
@@ -1090,15 +1090,15 @@ function renderPositions(positions, livePrices){
   document.getElementById('tb_open').textContent=positions.length;
 
   if(!positions.length){
-    if(!list.querySelector('.empty'))list.innerHTML='<div class="empty">Açık pozisyon yok</div>';
+    if(!list.querySelector('.empty'))list.innerHTML='<div class="empty">No open positions</div>';
     return;
   }
 
-  // Mevcut kart ID'lerini topla
+  // Collect existing card IDs
   const existingIds=new Set([...list.querySelectorAll('.pos-card')].map(c=>c.id.replace('pc_','')));
   const newIds=new Set(positions.map(p=>p.id));
 
-  // Kapanan pozisyonları sil (slide-out animasyonu ile)
+  // Remove closed positions (with slide-out animation)
   for(const id of existingIds){
     if(!newIds.has(id)){
       const card=document.getElementById('pc_'+id);
@@ -1109,14 +1109,14 @@ function renderPositions(positions, livePrices){
     }
   }
 
-  // Yeni pozisyonları ekle veya mevcut olanları güncelle
+  // Add new positions or update existing ones
   positions.forEach((pos,idx)=>{
     const mid=pos.market_id||'';
     const ld=livePrices[mid]||{};
     const existingCard=document.getElementById('pc_'+pos.id);
 
     if(!existingCard){
-      // Yeni kart — oluştur ve ekle
+      // New card — create and insert
       const tmp=document.createElement('div');
       tmp.innerHTML=buildPosCard(pos,ld);
       const card=tmp.firstElementChild;
@@ -1129,27 +1129,27 @@ function renderPositions(positions, livePrices){
         card.style.opacity='1'; card.style.transform='translateY(0)';
       });
     } else {
-      // Mevcut kart — sadece değişen değerleri güncelle
+      // Existing card — only update changed values
       patchPosCard(pos, ld);
     }
   });
 }
 
-// ─── CLOSED — sadece yenileri ekle, mevcutları dokunma ───
+// ─── CLOSED — only add new, don't touch existing ───
 let _knownClosedIds=new Set();
 function renderClosed(trades){
   const list=document.getElementById('closedListEl');
   document.getElementById('rp_closed').textContent=trades.length;
   if(!trades.length){
-    if(!list.querySelector('.empty'))list.innerHTML='<div class="empty">Henüz biten bahis yok</div>';
+    if(!list.querySelector('.empty'))list.innerHTML='<div class="empty">No closed bets yet</div>';
     return;
   }
 
-  // İlk yüklemede toplu render
+  // Batch render on initial load
   if(_knownClosedIds.size===0&&trades.length>0){
     list.innerHTML=[...trades].reverse().slice(0,30).map(t=>{
       const pnl=t.pnl||0;
-      const ts=new Date(t.resolved_at||t.ts||'').toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'});
+      const ts=new Date(t.resolved_at||t.ts||'').toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
       return `<div class="closed-card ${pnl>=0?'w':'l'}" data-id="${t.id}">
         <div class="closed-main">
           <div class="closed-mkt" title="${t.market}">${t.market}</div>
@@ -1165,12 +1165,12 @@ function renderClosed(trades){
     return;
   }
 
-  // Sadece yeni kapanan işlemleri başa ekle
+  // Only prepend newly closed trades
   const newTrades=trades.filter(t=>!_knownClosedIds.has(t.id));
   newTrades.forEach(t=>{
     _knownClosedIds.add(t.id);
     const pnl=t.pnl||0;
-    const ts=new Date(t.resolved_at||t.ts||'').toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'});
+    const ts=new Date(t.resolved_at||t.ts||'').toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
     const el=document.createElement('div');
     el.className=`closed-card ${pnl>=0?'w':'l'}`;
     el.dataset.id=t.id;
@@ -1183,13 +1183,13 @@ function renderClosed(trades){
       </div>
     </div>
     <div class="closed-pnl" style="color:${pnl>=0?'var(--green)':'var(--red)'}">${pnl>=0?'+':''}$${Math.abs(pnl).toFixed(2)}</div>`;
-    // Listenin en üstüne ekle (en yeni önce)
+    // Insert at top of list (newest first)
     list.insertBefore(el, list.firstChild);
     requestAnimationFrame(()=>{
       el.style.transition='opacity .4s,transform .4s';
       el.style.opacity='1'; el.style.transform='translateX(0)';
     });
-    // Maksimum 30 kart tut
+    // Keep max 30 cards
     while(list.children.length>30)list.removeChild(list.lastChild);
   });
 }
@@ -1200,7 +1200,7 @@ function renderClosed(trades){
 function renderOpps(opps){
   document.getElementById('tc_opps').textContent=opps.length;
   const tbody=document.getElementById('oppBody');
-  if(!opps.length){ tbody.innerHTML='<tr><td colspan="7" class="empty">Fırsat bulunamadı</td></tr>'; return; }
+  if(!opps.length){ tbody.innerHTML='<tr><td colspan="7" class="empty">No opportunities found</td></tr>'; return; }
   tbody.innerHTML=opps.slice(0,40).map(o=>{
     const edge=o.edge||0;
     const ec=edge>0.25?'eh':edge>0.15?'em':edge>0?'el':'en';
@@ -1222,11 +1222,11 @@ function renderOpps(opps){
 // ════════════════════════════════════════
 function renderHistory(trades){
   const tbody=document.getElementById('histBody');
-  if(!trades.length){ tbody.innerHTML='<tr><td colspan="7" class="empty">Henüz işlem yok</td></tr>'; return; }
+  if(!trades.length){ tbody.innerHTML='<tr><td colspan="7" class="empty">No trades yet</td></tr>'; return; }
   tbody.innerHTML=[...trades].reverse().map(t=>{
     const pnl=t.pnl||0, st=t.status||'open';
     return `<tr>
-      <td style="font-family:var(--mono);font-size:10px;color:var(--text3);white-space:nowrap">${new Date(t.ts).toLocaleString('tr-TR')}</td>
+      <td style="font-family:var(--mono);font-size:10px;color:var(--text3);white-space:nowrap">${new Date(t.ts).toLocaleString('en-US')}</td>
       <td class="opp-mkt" title="${t.market}">${t.market}</td>
       <td><span class="tag tg-${(t.side||'YES').toLowerCase()}">${t.side}</span></td>
       <td style="font-family:var(--mono)">$${(t.amount||0).toFixed(2)}</td>
@@ -1245,7 +1245,7 @@ function updateAutoStatus(s){
   const dot=document.getElementById('statusDot');
   const lbl=document.getElementById('statusLbl');
   dot.className='status-dot '+(running?'on':'');
-  lbl.textContent=running?'ÇALIŞIYOR':'DURDU';
+  lbl.textContent=running?'RUNNING':'STOPPED';
   lbl.className='status-label '+(running?'on':'off');
   document.getElementById('as_sc').textContent=s.scan_count||0;
   document.getElementById('as_bt').textContent=s.auto_bets||0;
@@ -1290,24 +1290,24 @@ function dc(id){
 
 async function loadChart(){
   try{
-    // Canvas wrapper'larının layout'u tamamlanmasını bekle
+    // Wait for canvas wrapper layout to complete
     await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
     const d=await(await fetch(`/api/pnl-history?limit=300&period=${chartPeriod}`)).json();
     renderCharts(d);
-  }catch(e){log('Grafik hatası: '+e.message,'e');}
+  }catch(e){log('Chart error: '+e.message,'e');}
 }
 
-// Chart ortak ayarlar
+// Chart shared settings
 const C_GREEN='#39e8a8', C_RED='#ff4d6a', C_AMBER='#f5c842';
 const C_TEAL='#2dd4bf', C_VIOLET='#c084fc', C_ROSE='#fb7185';
 const C_GRID='#1e1e30', C_TICK='#454360';
 const FONT={family:"'JetBrains Mono'",size:10};
 
-// Boş canvas'a bilgi mesajı çiz
-function drawEmptyChart(canvasId, msg='Bot çalışırken grafik dolacak'){
+// Draw info message on empty canvas
+function drawEmptyChart(canvasId, msg='Chart will populate while bot is running'){
   const canvas=document.getElementById(canvasId);
   if(!canvas)return;
-  // Wrapper div'den boyut al
+  // Get dimensions from wrapper div
   const wrap=canvas.parentElement;
   const w=wrap?wrap.clientWidth:canvas.offsetWidth||400;
   const h=wrap?wrap.clientHeight:canvas.offsetHeight||200;
@@ -1315,7 +1315,7 @@ function drawEmptyChart(canvasId, msg='Bot çalışırken grafik dolacak'){
   const ctx=canvas.getContext('2d');
   ctx.clearRect(0,0,w,h);
 
-  // Izgara
+  // Grid
   ctx.strokeStyle='rgba(37,37,53,.8)'; ctx.lineWidth=1;
   for(let i=1;i<6;i++){
     const y=h*i/6;
@@ -1326,25 +1326,25 @@ function drawEmptyChart(canvasId, msg='Bot çalışırken grafik dolacak'){
     ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke();
   }
 
-  // Eksen etiketleri
+  // Axis labels
   ctx.font=`400 9px 'JetBrains Mono',monospace`;
   ctx.fillStyle='#303048'; ctx.textAlign='right'; ctx.textBaseline='middle';
   ['0.00','0.20','0.40','0.60','0.80'].forEach((v,i)=>{
     ctx.fillText(v, 36, h-(h*i/5)+2);
   });
 
-  // Merkez ikon
+  // Center icon
   ctx.font='28px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
   ctx.globalAlpha=0.15; ctx.fillStyle='#c084fc';
   ctx.fillText('📈', w/2, h/2-18); ctx.globalAlpha=1;
 
-  // Mesaj
+  // Message
   ctx.font=`500 12px 'Space Grotesk',sans-serif`;
   ctx.fillStyle='#454360'; ctx.textAlign='center'; ctx.textBaseline='middle';
   ctx.fillText(msg, w/2, h/2+8);
   ctx.font=`400 10px 'JetBrains Mono',monospace`;
   ctx.fillStyle='#252535';
-  ctx.fillText('Snapshot her 30 saniyede kaydedilir', w/2, h/2+26);
+  ctx.fillText('Snapshots recorded every 30 seconds', w/2, h/2+26);
 }
 
 function renderCharts(d){
@@ -1357,23 +1357,23 @@ function renderCharts(d){
     win_count:Math.round((d.current.closed_trades||0)*(d.current.win_rate||0)/100)
   });
 
-  // Veri yoksa placeholder çiz, çık
+  // If no data, draw placeholder and exit
   if(!hist.length){
-    drawEmptyChart('mainChart','Henüz PnL verisi yok — bot çalışıyor mu?');
-    drawEmptyChart('portChart','Portföy Değeri');
+    drawEmptyChart('mainChart','No PnL data yet — is the bot running?');
+    drawEmptyChart('portChart','Portfolio Value');
     drawEmptyChart('breakChart','Realized vs Unrealized');
     drawEmptyChart('wrChart','Win Rate Trendi');
     return;
   }
 
-  const labels=hist.map(h=>new Date(h.ts).toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'}));
+  const labels=hist.map(h=>new Date(h.ts).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}));
   const totPnl=hist.map(h=>+(h.total_pnl||0).toFixed(4));
   const portVal=hist.map(h=>+(h.portfolio_value||init).toFixed(4));
   const lastPnl=totPnl[totPnl.length-1]||0;
   const pnlColor=lastPnl>=0?C_GREEN:C_RED;
   const pnlGlow=lastPnl>=0?'rgba(57,232,168,':' rgba(255,77,106,';
 
-  // ── Ana Grafik: PnL + Portföy ──
+  // ── Main Chart: PnL + Portfolio ──
   dc('main');
   charts['main']=new Chart(document.getElementById('mainChart').getContext('2d'),{
     type:'line',
@@ -1395,7 +1395,7 @@ function renderCharts(d){
       pointHoverBackgroundColor:'#fff',
       yAxisID:'y',
     },{
-      label:'Portföy ($)',
+      label:'Portfolio ($)',
       data:portVal,
       borderColor:C_TEAL,
       backgroundColor:'transparent',
@@ -1437,7 +1437,7 @@ function renderCharts(d){
           position:'right',
           ticks:{color:C_TICK,font:FONT,callback:v=>'$'+v.toFixed(0)},
           grid:{drawOnChartArea:false},
-          title:{display:true,text:'Portföy ($)',color:C_TICK,font:{size:9}},
+          title:{display:true,text:'Portfolio ($)',color:C_TICK,font:{size:9}},
         }
       }
     }
@@ -1462,12 +1462,12 @@ function renderCharts(d){
     }
   };
 
-  // ── Portföy Değeri ──
+  // ── Portfolio Value ──
   dc('port');
   charts['port']=new Chart(document.getElementById('portChart').getContext('2d'),{
     type:'line',
     data:{labels,datasets:[{
-      label:'Portföy ($)',
+      label:'Portfolio ($)',
       data:portVal,
       borderColor:C_TEAL,
       backgroundColor:ctx=>{
@@ -1477,7 +1477,7 @@ function renderCharts(d){
       },
       borderWidth:2,fill:true,tension:.4,pointRadius:0,pointHoverRadius:4,
     },{
-      label:'Başlangıç $'+init.toFixed(0),
+      label:'Initial $'+init.toFixed(0),
       data:hist.map(()=>init),
       borderColor:'#303048',borderDash:[6,4],borderWidth:1.5,
       pointRadius:0,backgroundColor:'transparent',
@@ -1528,7 +1528,7 @@ function renderCharts(d){
       borderWidth:2,fill:true,tension:.4,
       pointRadius:0,pointHoverRadius:4,pointHoverBackgroundColor:C_AMBER,
     },{
-      label:'50% Eşik',
+      label:'50% Threshold',
       data:hist.map(()=>50),
       borderColor:'#303048',borderDash:[5,4],borderWidth:1.5,
       pointRadius:0,backgroundColor:'transparent',
@@ -1565,16 +1565,16 @@ async function loadInit(){
     ]);
     const port=await pr.json(), auto=await ar.json(), hist=await hr.json();
 
-    // Portfolio rakamlarını güncelle (DOM diffing — flash yok)
+    // Update portfolio numbers (DOM diffing — no flash)
     updatePortfolio(port);
 
-    // Pozisyonlar — yalnızca değişen kartlar güncellenir
+    // Positions — only changed cards get updated
     positions=port.positions||[];
     closedTrades=port.recent_trades||[];
     renderPositions(positions, {});
     renderClosed(closedTrades);
 
-    // Geçmiş — sadece aktif sekmede render et
+    // History — only render in active tab
     if(document.getElementById('panel-history').classList.contains('active')){
       renderHistory(hist.trades||[]);
     }
@@ -1588,22 +1588,22 @@ async function loadInit(){
     });
 
     if(!_initDone){
-      log('✓ Tüm veriler yüklendi','s');
+      log('✓ All data loaded','s');
       loadChart();
       _initDone=true;
     }
-  }catch(e){ log('Veri güncelleme hatası: '+e.message,'e'); }
+  }catch(e){ log('Data update error: '+e.message,'e'); }
 }
 
 async function loadOpps(){
-  document.getElementById('oppBody').innerHTML='<tr><td colspan="7" class="empty"><span class="spin"></span>Polymarket CLOB taranıyor...</td></tr>';
+  document.getElementById('oppBody').innerHTML='<tr><td colspan="7" class="empty"><span class="spin"></span>Scanning Polymarket CLOB...</td></tr>';
   document.getElementById('oppSpinner').style.display='inline-block';
   try{
     const d=await(await fetch('/api/opportunities')).json();
     renderOpps(d.opportunities||[]);
-    log(`✓ ${d.total||0} fırsat — hava:${d.weather_count||0} btc:${d.btc_count||0} metals:${d.metals_count||0}`,'s');
+    log(`✓ ${d.total||0} opportunities — weather:${d.weather_count||0} btc:${d.btc_count||0} metals:${d.metals_count||0}`,'s');
   }catch(e){
-    document.getElementById('oppBody').innerHTML='<tr><td colspan="7" class="empty">Hata: '+e.message+'</td></tr>';
+    document.getElementById('oppBody').innerHTML='<tr><td colspan="7" class="empty">Error: '+e.message+'</td></tr>';
   }
   document.getElementById('oppSpinner').style.display='none';
 }
@@ -1614,12 +1614,12 @@ async function startAuto(){
   scanIntervalSec=interval;
   await fetch('/api/auto/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scan_interval:interval,min_edge_pct:minEdge})});
   await fetch('/api/auto/start',{method:'POST'});
-  log(`▶ AutoTrader başlatıldı — interval: ${interval}s, min edge: ${minEdge}%`,'s');
+  log(`▶ AutoTrader started — interval: ${interval}s, min edge: ${minEdge}%`,'s');
 }
 
 async function stopAuto(){
   await fetch('/api/auto/stop',{method:'POST'});
-  log('■ AutoTrader durduruldu','w');
+  log('■ AutoTrader stopped','w');
 }
 
 async function scanNow(){
@@ -1631,14 +1631,14 @@ async function scanNow(){
       const d=await(await fetch('/api/auto/scan-now',{method:'POST'})).json();
       const all=[...(d.weather_opportunities||[]),...(d.btc_opportunities||[]),...(d.metals_opportunities||[])];
       if(all.length)renderOpps(all);
-      log(`✓ ${d.total_opportunities||0} fırsat`,'s');
-    }catch(e){log('Tarama hatası: '+e.message,'e');}
+      log(`✓ ${d.total_opportunities||0} opportunities`,'s');
+    }catch(e){log('Scan error: '+e.message,'e');}
     document.getElementById('scanIcon').textContent='⟳';
   }
 }
 
 async function resolve(posId, outcome){
-  if(!confirm(`${posId} → ${outcome} olarak kapat?`))return;
+  if(!confirm(`Resolve ${posId} → ${outcome}?`))return;
   const card=document.getElementById('pc_'+posId);
   if(card)card.classList.add('resolving');
   const r=await fetch('/api/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({position_id:posId,outcome})});
@@ -1650,17 +1650,17 @@ async function resolve(posId, outcome){
       setTimeout(()=>{ if(card.parentNode)card.remove(); },420);
     }
     log(`${outcome==='YES'?'✓':'✗'} Resolve: ${posId} → ${outcome} | PnL: ${pnl>=0?'+':''}$${pnl.toFixed(2)}`,pnl>=0?'s':'w');
-    // Arka planda sessizce güncelle — sayfa titremez
+    // Silently update in background — no page jitter
     setTimeout(()=>{
-      loadInit();         // portföy rakamlarını güncelle
+      loadInit();         // update portfolio numbers
     }, 500);
-  }else{ if(card)card.classList.remove('resolving'); log('Hata: '+(d.error||''),'e'); }
+  }else{ if(card)card.classList.remove('resolving'); log('Error: '+(d.error||''),'e'); }
 }
 
 async function quickBet(oppStr){
   try{
     const o=JSON.parse(oppStr);
-    const amt=parseFloat(prompt(`${o.market.substring(0,70)}\n\nKaç $ bahis?`,'5'));
+    const amt=parseFloat(prompt(`${o.market.substring(0,70)}\n\nBet amount ($)?`,'5'));
     if(!amt||amt<=0)return;
     const price=o.side==='YES'?o.market_price:1-o.market_price;
     const r=await fetch('/api/place-bet',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
@@ -1668,16 +1668,16 @@ async function quickBet(oppStr){
     })});
     const d=await r.json();
     if(d.success){log(`✓ BET: ${o.side} $${amt} @ ${price.toFixed(3)} | ${o.market.substring(0,40)}`,'s'); setTimeout(loadInit,600); }
-    else log('Bahis hatası: '+(d.error||''),'e');
-  }catch(e){log('Hata: '+e.message,'e');}
+    else log('Bet error: '+(d.error||''),'e');
+  }catch(e){log('Error: '+e.message,'e');}
 }
 
 async function resetSim(){
-  if(!confirm('Tüm simülasyon verisi silinecek. Emin misiniz?'))return;
+  if(!confirm('All simulation data will be deleted. Are you sure?'))return;
   await fetch('/api/reset-sim',{method:'POST'});
   dailyStartBal=null;
   try{localStorage.removeItem('polyarb_daily');}catch(e){}
-  log('⚠ Simülasyon sıfırlandı','w');
+  log('⚠ Simulation reset','w');
   loadInit();
 }
 
@@ -1699,7 +1699,7 @@ function showTab(name,btn){
 // ════════════════════════════════════════
 function log(msg,level=''){
   const feed=document.getElementById('logFeed');
-  const ts=new Date().toLocaleTimeString('tr-TR');
+  const ts=new Date().toLocaleTimeString('en-US');
   const el=document.createElement('div');
   el.className='log-line '+level;
   el.innerHTML=`<span class="log-ts">${ts}</span>${msg}`;

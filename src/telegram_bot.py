@@ -1,15 +1,17 @@
 """
-Telegram Bot Integration for Polymarket ARB Bot
-- Sends notifications on new bets, position resolves, scan results
-- Supports commands: /status, /positions, /history, /start, /stop, /scan
-- Runs as async background task alongside the web server
+Telegram Bot — Professional Forex EA-Style Notifications
+═════════════════════════════════════════════════════════
+• Trade opened/closed alerts with full metrics
+• Daily performance reports (auto at midnight + /report command)
+• Startup summary with account snapshot
+• Commands: /status /history /report /start /stop /scan /help
 """
 
 import asyncio
 import aiohttp
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 log = logging.getLogger("telegram-bot")
@@ -21,7 +23,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 
 class TelegramBot:
-    """Telegram bot for Polymarket ARB Bot notifications and commands"""
+    """Professional Telegram notifications for Polymarket ARB Bot"""
 
     def __init__(self, token: str = "", chat_id: str = ""):
         self.token = token or os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -34,6 +36,14 @@ class TelegramBot:
         self._auto_trader = None
         self._live_cache = None
 
+        # Daily report tracking
+        self._daily_trades_open = 0
+        self._daily_trades_closed = 0
+        self._daily_pnl_start = 0.0
+        self._daily_best_trade = None   # {pnl, market}
+        self._daily_worst_trade = None  # {pnl, market}
+        self._last_report_date = None
+
         if self.enabled:
             log.info(f"Telegram bot enabled (chat_id: {self.chat_id})")
         else:
@@ -45,7 +55,9 @@ class TelegramBot:
         self._auto_trader = auto_trader
         self._live_cache = live_cache
 
-    # ─── SEND MESSAGES ────────────────────────────────────────────
+    # ═══════════════════════════════════════════════════════════
+    # SEND MESSAGE
+    # ═══════════════════════════════════════════════════════════
 
     async def send_message(self, text: str, parse_mode: str = "HTML"):
         """Send a message to the configured chat"""
@@ -62,77 +74,269 @@ class TelegramBot:
                 })
                 data = await resp.json()
                 if not data.get("ok"):
-                    log.warning(f"Telegram send failed: {data.get('description', 'unknown error')}")
+                    log.warning(f"Telegram send failed: {data.get('description', 'unknown')}")
                     return False
                 return True
         except Exception as e:
             log.error(f"Telegram send error: {e}")
             return False
 
-    # ─── NOTIFICATION METHODS ────────────────────────────────────
+    # ═══════════════════════════════════════════════════════════
+    # FOREX EA-STYLE NOTIFICATIONS
+    # ═══════════════════════════════════════════════════════════
 
-    async def notify_new_bet(self, bet_info: dict):
-        """Notify when a new bet is placed"""
-        side = bet_info.get('side', '?')
-        amount = bet_info.get('amount', 0)
-        price = bet_info.get('entry_price', 0)
-        edge = bet_info.get('edge_at_entry', 0)
-        market = bet_info.get('market', 'Unknown')[:60]
-        mtype = bet_info.get('type', '').upper()
+    async def notify_trade_opened(self, trade: dict):
+        """
+        🟢 TRADE OPENED — Forex EA style
+        Called when a new bet is placed (manual or auto)
+        """
+        side = trade.get('side', '?')
+        amount = trade.get('amount', 0)
+        price = trade.get('entry_price', 0)
+        edge = trade.get('edge_at_entry', 0)
+        market = trade.get('market', 'Unknown')
+        mtype = (trade.get('type', 'general') or 'general').upper()
+        trade_id = trade.get('id', '?')
+
+        # Get current account state
+        bal = 0.0
+        open_count = 0
+        if self._sim_engine:
+            p = self._sim_engine.get_portfolio_summary()
+            bal = p.get('balance', 0)
+            open_count = p.get('open_positions', 0)
+
+        potential_win = amount * (1 / price - 1) if price > 0 else 0
+        potential_loss = amount
 
         text = (
-            f"🎲 <b>NEW BET</b>\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"📌 {market}\n"
-            f"📊 Side: <b>{side}</b> | Type: {mtype}\n"
-            f"💰 Amount: <b>${amount:.2f}</b> @ {price:.3f}\n"
-            f"📈 Edge: {edge*100:+.1f}%"
+            f"{'🟢' if side == 'YES' else '🔴'} <b>TRADE OPENED</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📊 <b>{market[:65]}</b>\n"
+            f"\n"
+            f"▸ Side: <b>{side}</b>  |  Type: <code>{mtype}</code>\n"
+            f"▸ Size: <b>${amount:.2f}</b>  @  <code>{price:.4f}</code>\n"
+            f"▸ Edge: <b>{edge*100:+.1f}%</b>\n"
+            f"▸ Potential: +${potential_win:.2f} / -${potential_loss:.2f}\n"
+            f"\n"
+            f"💼 Balance: <b>${bal:.2f}</b>  |  Open: {open_count}\n"
+            f"🔖 ID: <code>{trade_id}</code>"
         )
         await self.send_message(text)
 
-    async def notify_resolve(self, result: dict, new_balance: float = 0):
-        """Notify when a position is resolved/sold"""
-        pnl = result.get('pnl', 0)
-        status = result.get('status', 'unknown').upper()
-        market = result.get('market', 'Unknown')[:60]
-        outcome = result.get('outcome', '?')
+        # Track daily stats
+        self._daily_trades_open += 1
 
-        emoji = "✅" if pnl >= 0 else "❌"
+    async def notify_trade_closed(self, trade: dict):
+        """
+        ✅/❌ TRADE CLOSED — Forex EA style
+        Called when a position is resolved or sold
+        """
+        pnl = trade.get('pnl', 0)
+        amount = trade.get('amount', 0)
+        market = trade.get('market', 'Unknown')
+        side = trade.get('side', '?')
+        outcome = trade.get('outcome', '?')
+        entry = trade.get('entry_price', 0)
+        trade_id = trade.get('id', '?')
+        status = trade.get('status', 'unknown')
+
+        # ROI calculation
+        roi = (pnl / amount * 100) if amount > 0 else 0
+
+        # Duration
+        duration_str = "—"
+        try:
+            ts_open = trade.get('ts', '')
+            ts_close = trade.get('resolved_at', '')
+            if ts_open and ts_close:
+                t1 = datetime.fromisoformat(str(ts_open).replace('Z', '+00:00'))
+                t2 = datetime.fromisoformat(str(ts_close).replace('Z', '+00:00'))
+                delta = t2 - t1
+                hours = delta.total_seconds() / 3600
+                if hours < 1:
+                    duration_str = f"{int(delta.total_seconds() / 60)}m"
+                elif hours < 24:
+                    duration_str = f"{hours:.1f}h"
+                else:
+                    duration_str = f"{delta.days}d {int(hours % 24)}h"
+        except Exception:
+            pass
+
+        # Get current account state
+        bal = 0.0
+        total_pnl = 0.0
+        win_rate = 0.0
+        win_count = 0
+        loss_count = 0
+        if self._sim_engine:
+            p = self._sim_engine.get_portfolio_summary()
+            bal = p.get('balance', 0)
+            total_pnl = p.get('total_pnl', 0)
+            win_rate = p.get('win_rate', 0)
+            win_count = p.get('win_count', 0)
+            loss_count = max(0, p.get('closed_trades', 0) - win_count)
+
+        is_win = pnl >= 0
+        emoji = "✅" if is_win else "❌"
+        pnl_sign = "+" if pnl >= 0 else ""
+
         text = (
-            f"{emoji} <b>POSITION CLOSED</b>\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"📌 {market}\n"
-            f"📊 Result: <b>{status}</b> → {outcome}\n"
-            f"💰 PnL: <b>{'+'if pnl>=0 else ''}${pnl:.2f}</b>\n"
-            f"💼 Balance: ${new_balance:.2f}"
+            f"{emoji} <b>TRADE CLOSED</b>  {'WIN' if is_win else 'LOSS'}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📊 <b>{market[:65]}</b>\n"
+            f"\n"
+            f"▸ {side} → {outcome}  |  Duration: {duration_str}\n"
+            f"▸ Entry: <code>{entry:.4f}</code>  |  Size: ${amount:.2f}\n"
+            f"▸ P/L: <b>{pnl_sign}${abs(pnl):.2f}</b>  ({pnl_sign}{roi:.1f}%)\n"
+            f"\n"
+            f"💼 Balance: <b>${bal:.2f}</b>\n"
+            f"📈 Total P/L: {'+' if total_pnl >= 0 else ''}${total_pnl:.2f}\n"
+            f"📊 Record: {win_count}W / {loss_count}L  ({win_rate:.1f}%)\n"
+            f"🔖 ID: <code>{trade_id}</code>"
+        )
+        await self.send_message(text)
+
+        # Track daily stats
+        self._daily_trades_closed += 1
+        if self._daily_best_trade is None or pnl > self._daily_best_trade['pnl']:
+            self._daily_best_trade = {'pnl': pnl, 'market': market[:40]}
+        if self._daily_worst_trade is None or pnl < self._daily_worst_trade['pnl']:
+            self._daily_worst_trade = {'pnl': pnl, 'market': market[:40]}
+
+    async def send_daily_report(self):
+        """
+        📋 DAILY PERFORMANCE REPORT — Forex EA style
+        Sent at midnight or on demand via /report
+        """
+        if not self._sim_engine:
+            return
+
+        p = self._sim_engine.get_portfolio_summary()
+        bal = p.get('balance', 0)
+        total_pnl = p.get('total_pnl', 0)
+        win_rate = p.get('win_rate', 0)
+        win_count = p.get('win_count', 0)
+        total_trades = p.get('closed_trades', 0)
+        loss_count = max(0, total_trades - win_count)
+        open_pos = p.get('open_positions', 0)
+        initial = p.get('initial_balance', 10000)
+        invested = p.get('total_invested', 0)
+
+        # Daily P/L
+        daily_pnl = bal - self._daily_pnl_start if self._daily_pnl_start > 0 else total_pnl
+
+        # Best / Worst
+        best = self._daily_best_trade
+        worst = self._daily_worst_trade
+        best_str = f"+${best['pnl']:.2f} ({best['market']})" if best and best['pnl'] != 0 else "—"
+        worst_str = f"-${abs(worst['pnl']):.2f} ({worst['market']})" if worst and worst['pnl'] != 0 else "—"
+
+        # AutoTrader stats
+        auto_scans = 0
+        auto_bets = 0
+        auto_running = False
+        if self._auto_trader:
+            auto_scans = self._auto_trader.scan_count
+            auto_bets = self._auto_trader.auto_bets_placed
+            auto_running = self._auto_trader.running
+
+        now = datetime.now()
+        dpnl_sign = "+" if daily_pnl >= 0 else ""
+
+        text = (
+            f"📋 <b>DAILY REPORT</b>  —  {now.strftime('%b %d, %Y')}\n"
+            f"═══════════════════════════\n"
+            f"\n"
+            f"💰 <b>ACCOUNT</b>\n"
+            f"▸ Balance: <b>${bal:.2f}</b>\n"
+            f"▸ Invested: ${invested:.2f}\n"
+            f"▸ Initial: ${initial:.2f}\n"
+            f"\n"
+            f"📈 <b>PERFORMANCE</b>\n"
+            f"▸ Day P/L: <b>{dpnl_sign}${abs(daily_pnl):.2f}</b>\n"
+            f"▸ Total P/L: {'+' if total_pnl >= 0 else ''}${total_pnl:.2f}\n"
+            f"▸ ROI: {'+' if total_pnl >= 0 else ''}{(total_pnl / initial * 100) if initial > 0 else 0:.2f}%\n"
+            f"\n"
+            f"📊 <b>TRADES</b>\n"
+            f"▸ Opened today: {self._daily_trades_open}\n"
+            f"▸ Closed today: {self._daily_trades_closed}\n"
+            f"▸ Open positions: {open_pos}\n"
+            f"▸ Record: {win_count}W / {loss_count}L ({win_rate:.1f}%)\n"
+            f"\n"
+            f"🏆 Best: {best_str}\n"
+            f"💀 Worst: {worst_str}\n"
+            f"\n"
+            f"🤖 <b>AUTOTRADER</b>\n"
+            f"▸ Status: {'🟢 RUNNING' if auto_running else '🔴 STOPPED'}\n"
+            f"▸ Scans: {auto_scans}  |  Auto bets: {auto_bets}\n"
+            f"\n"
+            f"═══════════════════════════\n"
+            f"<i>POLYARB TRADING TERMINAL v1.3</i>"
+        )
+        await self.send_message(text)
+
+        # Reset daily counters
+        self._daily_trades_open = 0
+        self._daily_trades_closed = 0
+        self._daily_pnl_start = bal
+        self._daily_best_trade = None
+        self._daily_worst_trade = None
+        self._last_report_date = now.date()
+
+    async def send_startup_summary(self):
+        """
+        🚀 STARTUP SUMMARY — sent when bot comes online
+        """
+        if not self._sim_engine:
+            await self.send_message("🟢 <b>Polymarket ARB Bot</b> is online!\nType /help for commands.")
+            return
+
+        p = self._sim_engine.get_portfolio_summary()
+        bal = p.get('balance', 0)
+        total_pnl = p.get('total_pnl', 0)
+        win_rate = p.get('win_rate', 0)
+        open_pos = p.get('open_positions', 0)
+        total_trades = p.get('closed_trades', 0)
+
+        self._daily_pnl_start = bal  # Track for daily report
+
+        text = (
+            f"🚀 <b>BOT ONLINE</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"💼 Balance: <b>${bal:.2f}</b>\n"
+            f"📈 Total P/L: {'+' if total_pnl >= 0 else ''}${total_pnl:.2f}\n"
+            f"📊 Win Rate: {win_rate:.1f}%  |  Trades: {total_trades}\n"
+            f"📌 Open positions: {open_pos}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"<i>POLYARB TRADING TERMINAL v1.3</i>\n"
+            f"Type /help for commands"
         )
         await self.send_message(text)
 
     async def notify_scan_complete(self, scan_result: dict):
-        """Notify on scan cycle completion (only if bets were placed or resolved)"""
+        """Notify on scan cycle (only if bets placed or resolved)"""
         bets = scan_result.get('bets_placed', 0)
         resolved = scan_result.get('resolved', 0)
         total_opps = scan_result.get('total_opportunities', 0)
         cycle = scan_result.get('cycle', 0)
-        portfolio = scan_result.get('portfolio', {})
 
-        # Only send notification if something happened
+        # Only send if something happened
         if bets == 0 and resolved == 0:
             return
 
+        portfolio = scan_result.get('portfolio', {})
         text = (
-            f"🔍 <b>SCAN #{cycle} COMPLETE</b>\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"📊 Opportunities: {total_opps}\n"
-            f"🎲 Bets placed: <b>{bets}</b>\n"
-            f"✅ Resolved: <b>{resolved}</b>\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"💼 Balance: ${portfolio.get('balance', 0):.2f}\n"
-            f"📈 Total PnL: {'+'if portfolio.get('total_pnl',0)>=0 else ''}${portfolio.get('total_pnl', 0):.2f}\n"
-            f"📊 Win Rate: {portfolio.get('win_rate', 0):.1f}%\n"
-            f"📌 Open: {portfolio.get('open_positions', 0)} positions"
+            f"🔍 <b>SCAN #{cycle}</b>\n"
+            f"▸ Opportunities: {total_opps}\n"
+            f"▸ Bets placed: <b>{bets}</b>  |  Resolved: <b>{resolved}</b>\n"
+            f"▸ Balance: ${portfolio.get('balance', 0):.2f}"
         )
         await self.send_message(text)
+
+    # ═══════════════════════════════════════════════════════════
+    # PORTFOLIO STATUS (for /status command)
+    # ═══════════════════════════════════════════════════════════
 
     async def send_portfolio_status(self):
         """Send current portfolio status"""
@@ -142,31 +346,39 @@ class TelegramBot:
 
         p = self._sim_engine.get_portfolio_summary()
         positions = self._sim_engine.positions
+        bal = p.get('balance', 0)
+        total_pnl = p.get('total_pnl', 0)
+        win_rate = p.get('win_rate', 0)
+        win_count = p.get('win_count', 0)
+        total_trades = p.get('closed_trades', 0)
+        loss_count = max(0, total_trades - win_count)
+        invested = p.get('total_invested', 0)
 
-        # Format open positions
         pos_text = ""
         if positions:
-            pos_lines = []
-            for pos in positions[:5]:
-                pos_lines.append(
-                    f"  • {pos.get('side','')} ${pos.get('amount',0):.2f} @ "
-                    f"{pos.get('entry_price',0):.3f} | {pos.get('market','')[:35]}"
-                )
-            pos_text = "\n".join(pos_lines)
+            lines = []
+            for pos in positions[:8]:
+                side = pos.get('side', '')
+                amt = pos.get('amount', 0)
+                entry = pos.get('entry_price', 0)
+                mkt = pos.get('market', '')[:35]
+                lines.append(f"  {'🟢' if side=='YES' else '🔴'} {side} ${amt:.2f} @ {entry:.3f} | {mkt}")
+            pos_text = "\n".join(lines)
         else:
             pos_text = "  No open positions"
 
+        auto_status = "🟢 RUNNING" if (self._auto_trader and self._auto_trader.running) else "🔴 STOPPED"
+
         text = (
             f"📊 <b>PORTFOLIO STATUS</b>\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"💰 Balance: <b>${p.get('balance', 0):.2f}</b>\n"
-            f"💼 Portfolio Value: ${p.get('portfolio_value', 0):.2f}\n"
-            f"📈 Total PnL: <b>{'+'if p.get('total_pnl',0)>=0 else ''}${p.get('total_pnl', 0):.2f}</b> "
-            f"({p.get('pnl_pct', 0):+.1f}%)\n"
-            f"📊 Win Rate: {p.get('win_rate', 0):.1f}%\n"
-            f"🔢 Trades: {p.get('closed_trades', 0)} closed | {p.get('open_positions', 0)} open\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"<b>Open Positions:</b>\n{pos_text}"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"💰 Balance: <b>${bal:.2f}</b>\n"
+            f"💼 Invested: ${invested:.2f}\n"
+            f"📈 Total P/L: <b>{'+' if total_pnl >= 0 else ''}${total_pnl:.2f}</b>\n"
+            f"📊 Record: {win_count}W / {loss_count}L ({win_rate:.1f}%)\n"
+            f"🤖 AutoTrader: {auto_status}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"<b>Open Positions ({len(positions)}):</b>\n{pos_text}"
         )
         await self.send_message(text)
 
@@ -181,43 +393,70 @@ class TelegramBot:
             await self.send_message("📋 No closed trades yet")
             return
 
+        total_pnl = sum(t.get('pnl', 0) for t in trades)
+        wins = sum(1 for t in trades if t.get('pnl', 0) > 0)
+
         lines = []
         for t in reversed(trades):
             pnl = t.get('pnl', 0)
             emoji = "✅" if pnl > 0 else "❌" if pnl < 0 else "➖"
             lines.append(
-                f"{emoji} {t.get('side','')} ${t.get('amount',0):.2f} → "
-                f"{'+'if pnl>=0 else ''}${pnl:.2f} | {t.get('market','')[:30]}"
+                f"{emoji} {t.get('side', '')} ${t.get('amount', 0):.2f} → "
+                f"{'+'if pnl >= 0 else ''}${pnl:.2f} | {t.get('market', '')[:30]}"
             )
 
         text = (
             f"📋 <b>RECENT TRADES</b> (last {len(trades)})\n"
-            f"━━━━━━━━━━━━━━━\n" +
-            "\n".join(lines)
+            f"━━━━━━━━━━━━━━━━━━━━━\n" +
+            "\n".join(lines) +
+            f"\n━━━━━━━━━━━━━━━━━━━━━\n"
+            f"Sum: {'+'if total_pnl >= 0 else ''}${total_pnl:.2f}  |  {wins}W / {len(trades) - wins}L"
         )
         await self.send_message(text)
 
-    # ─── COMMAND HANDLER ─────────────────────────────────────────
+    # ═══════════════════════════════════════════════════════════
+    # DAILY REPORT CHECK (called from ws_broadcast_task)
+    # ═══════════════════════════════════════════════════════════
+
+    async def check_daily_report(self):
+        """Check if midnight crossed → send daily report"""
+        now = datetime.now()
+        today = now.date()
+        if self._last_report_date is None:
+            self._last_report_date = today
+            if self._sim_engine:
+                self._daily_pnl_start = self._sim_engine.get_portfolio_summary().get('balance', 0)
+            return False
+        if today > self._last_report_date:
+            await self.send_daily_report()
+            return True
+        return False
+
+    # ═══════════════════════════════════════════════════════════
+    # COMMAND HANDLER
+    # ═══════════════════════════════════════════════════════════
 
     async def handle_command(self, text: str, chat_id: str):
         """Handle incoming Telegram commands"""
-        # Security: only respond to configured chat_id
         if str(chat_id) != str(self.chat_id):
             log.warning(f"Telegram: unauthorized chat_id {chat_id}")
             return
 
         cmd = text.strip().lower().split()[0] if text.strip() else ""
 
-        if cmd == "/status" or cmd == "/s":
+        if cmd in ("/status", "/s"):
             await self.send_portfolio_status()
 
-        elif cmd == "/positions" or cmd == "/pos" or cmd == "/p":
+        elif cmd in ("/positions", "/pos", "/p"):
             await self.send_portfolio_status()
 
-        elif cmd == "/history" or cmd == "/h":
+        elif cmd in ("/history", "/h"):
             await self.send_history()
 
-        elif cmd == "/start_auto" or cmd == "/start":
+        elif cmd in ("/report", "/r", "/daily"):
+            await self.send_daily_report()
+
+        elif cmd in ("/start_auto", "/start"):
             if self._auto_trader:
                 if self._auto_trader.running:
                     await self.send_message("⚡ AutoTrader is already running")
@@ -227,7 +466,7 @@ class TelegramBot:
             else:
                 await self.send_message("⚠️ AutoTrader not connected")
 
-        elif cmd == "/stop_auto" or cmd == "/stop":
+        elif cmd in ("/stop_auto", "/stop"):
             if self._auto_trader:
                 if not self._auto_trader.running:
                     await self.send_message("⏹ AutoTrader is already stopped")
@@ -245,8 +484,8 @@ class TelegramBot:
                     await self.notify_scan_complete(result)
                     if result.get('bets_placed', 0) == 0 and result.get('resolved', 0) == 0:
                         await self.send_message(
-                            f"🔍 Scan complete: {result.get('total_opportunities', 0)} "
-                            f"opportunities found, no action taken"
+                            f"🔍 Scan: {result.get('total_opportunities', 0)} "
+                            f"opportunities, no action taken"
                         )
                 except Exception as e:
                     await self.send_message(f"❌ Scan error: {e}")
@@ -255,28 +494,30 @@ class TelegramBot:
 
         elif cmd == "/help":
             await self.send_message(
-                "🤖 <b>Polymarket ARB Bot</b>\n"
-                "━━━━━━━━━━━━━━━\n"
-                "/status - Portfolio status\n"
-                "/positions - Open positions\n"
-                "/history - Recent trades\n"
-                "/start - Start AutoTrader\n"
-                "/stop - Stop AutoTrader\n"
-                "/scan - Run manual scan\n"
-                "/help - Show this message"
+                "🤖 <b>POLYARB TRADING TERMINAL</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n"
+                "/status  — Portfolio & positions\n"
+                "/history — Recent closed trades\n"
+                "/report  — Daily performance report\n"
+                "/start   — Start AutoTrader\n"
+                "/stop    — Stop AutoTrader\n"
+                "/scan    — Run manual scan\n"
+                "/help    — Show this message\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n"
+                "<i>v1.3 — Forex EA Notifications</i>"
             )
 
         else:
-            await self.send_message(
-                "❓ Unknown command. Use /help to see available commands."
-            )
+            await self.send_message("❓ Unknown command. /help for commands.")
 
-    # ─── POLLING LOOP ────────────────────────────────────────────
+    # ═══════════════════════════════════════════════════════════
+    # POLLING LOOP
+    # ═══════════════════════════════════════════════════════════
 
     async def _poll_updates(self):
         """Long-poll Telegram for new messages/commands"""
         log.info("Telegram polling started")
-        await self.send_message("🟢 <b>Polymarket ARB Bot</b> is online!\nType /help for commands.")
+        await self.send_startup_summary()
 
         while True:
             try:
@@ -329,7 +570,9 @@ class TelegramBot:
             self._polling_task = None
 
 
-# ─── SINGLETON INSTANCE ──────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
+# SINGLETON INSTANCE
+# ═══════════════════════════════════════════════════════════
 
 _bot_instance = None
 
