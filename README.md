@@ -89,6 +89,7 @@ python bump_version.py major  # 1.0.0 -> 2.0.0
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v1.5.0 | 2026-02-24 | Smart strategy overhaul: UniversalMarketEngine scans ALL Polymarket markets (extreme price + momentum + volume spike), BTC log-normal probability model (replaces fabricated lookup), sell_position() with TP/SL/time-stop exits, confidence-based bet sizing, per-type expiry filters, max 15 positions, 5 bets/cycle, dashboard: history auto-update, 15s chart refresh, 30 opportunities via WS |
 | v1.4.0 | 2026-02-24 | Strategy overhaul: fix directional edge filter (abs→signed), add 72h expiry filter, confidence floor ≥30%, max 6 positions cap, metals distance-to-target discount, MIN_EDGE 25%, real-time closed trades in dashboard, full English codebase |
 | v1.3.0 | 2026-02-24 | Full English UI, professional Forex EA-style Telegram notifications (trade open/close/daily report), auto-trade event detection, /report command |
 | v1.2.0 | 2026-02-24 | New v9 Trading Terminal dashboard, Telegram bot live integration, WS scan_interval broadcast, live PnL/charts/stats |

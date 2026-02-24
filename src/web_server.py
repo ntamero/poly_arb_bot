@@ -22,7 +22,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from bot import (
     CFG, PolymarketClient, PriceAggregator, NOAAClient,
-    WeatherArbEngine, BTCArbEngine, MetalsArbEngine, GeneralMarketScanner,
+    WeatherArbEngine, BTCArbEngine, MetalsArbEngine, UniversalMarketEngine,
     SimulationEngine, AutoTrader, DATA_DIR, LOG_DIR
 )
 
@@ -39,7 +39,7 @@ price_agg = PriceAggregator()
 weather_engine = WeatherArbEngine()
 btc_engine = BTCArbEngine()
 metals_engine = MetalsArbEngine()
-scanner = GeneralMarketScanner()
+universal_engine = UniversalMarketEngine()
 cached_data = {"markets": [], "btc_prices": {}, "weather": {}, "metals": {}, "opportunities": [], "last_update": None}
 # PnL time series
 pnl_history = []
@@ -723,7 +723,7 @@ async def ws_broadcast_task(app):
                 "scan_interval": auto_trader.scan_interval,
                 "daily_spent": round(auto_trader.daily_spent, 2),
                 "last_logs": auto_trader.stats.get("cycle_log", [])[-5:],
-                "last_opportunities": auto_trader.stats.get("last_opportunities", [])[:10],
+                "last_opportunities": auto_trader.stats.get("last_opportunities", [])[:30],
             }
 
             msg = json.dumps({"type": "live_update", "data": data}, default=str)
