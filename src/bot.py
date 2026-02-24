@@ -1559,11 +1559,11 @@ class ArbBot:
                      f"Edge: {opp['edge']*100:+.1f}% | "
                      f"{opp['side']} @ {opp['market_price']:.3f}")
 
-        # Auto bet in simulation mode
-        if self.sim and CFG.max_daily_usd > 0:
+        # Auto bet in simulation mode (0 = unlimited)
+        if self.sim:
             executed = 0
-            for opp in all_opps[:3]:
-                if executed >= 3:
+            for opp in all_opps[:5]:
+                if executed >= 5:
                     break
                 success = await self.execute_opportunity(opp)
                 if success:
@@ -2111,10 +2111,11 @@ class AutoTrader:
             elif side_from_engine == "NO" and raw_edge > -self.min_edge_auto:
                 continue
 
-            # Per-type expiry filter
+            # Per-type expiry filter (relaxed: metals 48h, others 24h)
             opp_type = opp.get("type", "")
-            expiry_hours = {"btc": 72, "weather": 72, "universal": 48, "metals": 168}.get(opp_type, 72)
+            expiry_hours = {"btc": 48, "weather": 48, "universal": 24, "metals": 48}.get(opp_type, 48)
             end_date_str = opp.get("end_date", "")
+            hours_left = None
             if end_date_str:
                 try:
                     end_dt = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
@@ -2125,20 +2126,54 @@ class AutoTrader:
                 except (ValueError, TypeError):
                     pass
 
-            # Confidence floor: skip low-confidence analysis
+            # Confidence floor: skip very-low-confidence analysis (< 5%)
             confidence = opp.get("confidence", 0)
-            if confidence > 0 and confidence < 0.30:
-                self._log_cycle(f"SKIP (low confidence {confidence:.0%}): {opp['market'][:40]}")
+            if confidence > 0 and confidence < 0.05:
+                self._log_cycle(f"SKIP (confidence {confidence:.0%} < 5%): {opp['market'][:40]}")
                 continue
 
+            # ── VALIDATION TRIGGERS ──
+            # 1) Edge sanity: reject absurdly high edges (likely data errors)
+            abs_edge = abs(opp["edge"])
+            if abs_edge > 0.80:
+                self._log_cycle(f"SKIP (edge {abs_edge*100:.0f}% too high — likely data error): {opp['market'][:40]}")
+                continue
+
+            # 2) Spread sanity: don't bet into wide-spread markets (illiquid)
+            ob_spread = opp.get("ob_spread", 0)
+            if ob_spread > 0.15:
+                self._log_cycle(f"SKIP (spread {ob_spread*100:.1f}% too wide): {opp['market'][:40]}")
+                continue
+
+            # 3) Counter-consensus guard: if market is > 90% one way AND model
+            #    predicts same direction — don't add, the market already priced it in.
+            #    Only bet AGAINST strong consensus, not WITH it (contrarian edge).
+            mkt_price = opp["market_price"]
+            side_from_engine = opp["side"]
+            if side_from_engine == "YES" and mkt_price >= 0.90:
+                self._log_cycle(f"SKIP (YES@{mkt_price:.0%} consensus too strong): {opp['market'][:40]}")
+                continue
+            if side_from_engine == "NO" and mkt_price <= 0.10:
+                self._log_cycle(f"SKIP (NO@{mkt_price:.0%} consensus too strong): {opp['market'][:40]}")
+                continue
+
+            # 4) Time-weighted confidence: reduce confidence for near-expiry markets
+            time_conf_adj = 1.0
+            if hours_left is not None:
+                if hours_left < 72:
+                    time_conf_adj = 0.5   # near-expiry: halve confidence
+                elif hours_left < 168:
+                    time_conf_adj = 0.75  # mid-range: reduce 25%
+
+            adjusted_confidence = confidence * time_conf_adj
+
             real_prob = opp.get("noaa_prob") or opp.get("real_prob", 0.5)
-            opp_confidence = opp.get("confidence", 0.5)
-            bet_size = self.calculate_bet_size(opp["edge"], real_prob, opp_confidence)
+            bet_size = self.calculate_bet_size(opp["edge"], real_prob, adjusted_confidence)
             if bet_size < 0.50:
                 continue
 
             # Place bet
-            side = opp["side"]
+            side = side_from_engine
             price = opp["market_price"] if side == "YES" else 1 - opp["market_price"]
             if price <= 0 or price >= 1:
                 continue
@@ -2173,8 +2208,8 @@ class AutoTrader:
 
                 real_prob = opp.get("noaa_prob") or opp.get("real_prob", 0)
                 self._log_cycle(
-                    f">> AUTO-BET: {side} ${bet_size:.0f} @ {price:.3f} | "
-                    f"Edge: {opp['edge']*100:+.1f}% | "
+                    f">> AUTO-BET: {side} ${bet_size:.2f} @ {price:.3f} | "
+                    f"Edge: {opp['edge']*100:+.1f}% | Conf: {adjusted_confidence:.0%} | "
                     f"Real: {real_prob*100:.0f}% vs Market: {opp['market_price']*100:.0f}% | "
                     f"{opp['market'][:50]}",
                     "success"
