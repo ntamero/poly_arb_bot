@@ -1,10 +1,10 @@
 """
-Polymarket Simulasyon Web Dashboard v3.0 - OTOMATiK TRADiNG
-- Gercek Polymarket verilerini ceker
-- Sanal bahis yapma imkani (manuel + otomatik)
-- AutoTrader: Otomatik BTC (5 borsa) ve NOAA analizi ile bahis
-- Portfolio takibi, win rate analizi
-- Olasilik analizi dashboard
+Polymarket Simulation Web Dashboard v3.0 - AUTOMATIC TRADING
+- Fetches real Polymarket data
+- Virtual betting (manual + automatic)
+- AutoTrader: Automatic BTC (5 exchanges) and NOAA analysis betting
+- Portfolio tracking, win rate analysis
+- Probability analysis dashboard
 """
 
 import asyncio
@@ -16,19 +16,17 @@ from pathlib import Path
 from datetime import datetime, timezone
 from aiohttp import web
 
-# Proje yolunu ayarla
+# Set up project path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-# Versiyon dosyasından oku
-VERSION_FILE = PROJECT_ROOT / "VERSION"
-APP_VERSION = VERSION_FILE.read_text().strip() if VERSION_FILE.exists() else "1.0.0"
-
 from bot import (
     CFG, PolymarketClient, PriceAggregator, NOAAClient,
-    WeatherArbEngine, BTCArbEngine, MetalsArbEngine, GeneralMarketScanner,
+    WeatherArbEngine, BTCArbEngine, MetalsArbEngine, UniversalMarketEngine,
     SimulationEngine, AutoTrader, DATA_DIR, LOG_DIR
 )
+
+from telegram_bot import get_telegram_bot
 
 import logging
 log = logging.getLogger("web-server")
@@ -41,9 +39,9 @@ price_agg = PriceAggregator()
 weather_engine = WeatherArbEngine()
 btc_engine = BTCArbEngine()
 metals_engine = MetalsArbEngine()
-scanner = GeneralMarketScanner()
+universal_engine = UniversalMarketEngine()
 cached_data = {"markets": [], "btc_prices": {}, "weather": {}, "metals": {}, "opportunities": [], "last_update": None}
-# PnL zaman serisi
+# PnL time series
 pnl_history = []
 MAX_PNL_HISTORY = 500
 
@@ -90,16 +88,16 @@ def load_pnl_history():
         if pf.exists():
             with open(pf) as f:
                 pnl_history.extend(json.load(f))
-            log.info(f"PnL gecmisi yuklendi: {len(pnl_history)} kayit")
+            log.info(f"PnL history loaded: {len(pnl_history)} records")
     except Exception as e:
         log.warning(f"PnL history load: {e}")
 
 
-# --- LIVE PRICE CACHE (3s polling icin) ----------------------------------------
+# --- LIVE PRICE CACHE (for 3s polling) ----------------------------------------
 
 class LivePriceCache:
-    """BTC + acik pozisyonlarin orderbook fiyatlarini onbellekte tutar.
-    Frontend 3sn'de bir sorgular, backend en fazla 5sn'de bir gercek API cagirir."""
+    """Caches BTC + open position orderbook prices.
+    Frontend polls every 3s, backend calls real API at most every 5s."""
 
     def __init__(self):
         self.btc_prices = {}
@@ -109,13 +107,13 @@ class LivePriceCache:
         self.position_prices = {}   # market_id -> {price, spread, liquid, side, market}
         self.last_btc_fetch = 0
         self.last_pos_fetch = 0
-        self.btc_ttl = 5            # BTC fiyatlari 5sn cache
-        self.pos_ttl = 8            # Pozisyon fiyatlari 8sn cache
+        self.btc_ttl = 5            # BTC prices 5s cache
+        self.pos_ttl = 8            # Position prices 8s cache
         self._lock = asyncio.Lock()
         self.tick_count = 0
 
     async def get_live_data(self):
-        """Canli fiyatlari dondur, gerekiyorsa yenile"""
+        """Return live prices, refresh if stale"""
         now = time.time()
         btc_stale = (now - self.last_btc_fetch) >= self.btc_ttl
         pos_stale = (now - self.last_pos_fetch) >= self.pos_ttl
@@ -175,7 +173,7 @@ class LivePriceCache:
             result = {}
             tasks = []
             for pos in positions:
-                # Her pozisyon icin orderbook fiyati al
+                # Get orderbook price for each position
                 token_id = pos.get("token_id", "")
                 no_token_id = pos.get("no_token_id", "")
                 tid = token_id if pos.get("side") == "YES" else no_token_id
@@ -195,8 +193,8 @@ class LivePriceCache:
                     entry = pos.get("entry_price", 0)
                     side = pos.get("side", "YES")
                     amount = pos.get("amount", 0)
-                    # PnL hesapla: shares * current_price - amount
-                    # tid zaten dogru token (YES icin YES token, NO icin NO token)
+                    # Calculate PnL: shares * current_price - amount
+                    # tid is already the correct token (YES token for YES, NO token for NO)
                     if entry > 0 and mp > 0:
                         shares = amount / entry
                         current_val = shares * mp
@@ -228,19 +226,19 @@ live_cache = LivePriceCache()
 # --- API ROUTES ---------------------------------------------------------------
 
 async def handle_index(request):
-    """Ana sayfa - dashboard HTML"""
+    """Main page - dashboard HTML"""
     html_path = PROJECT_ROOT / "static" / "index.html"
     if html_path.exists():
         return web.FileResponse(html_path)
-    return web.Response(text="static/index.html bulunamadi", status=404)
+    return web.Response(text="static/index.html not found", status=404)
 
 
 async def handle_api_status(request):
-    """Sistem durumu"""
+    """System status"""
     return web.json_response({
         "status": "online",
         "mode": "simulation" if CFG.simulation_mode else "live",
-        "version": APP_VERSION,
+        "version": "3.0",
         "uptime": datetime.now(timezone.utc).isoformat(),
         "auto_trader_running": auto_trader.running,
         "config": {
@@ -254,15 +252,27 @@ async def handle_api_status(request):
 
 
 async def handle_api_portfolio(request):
-    """Portfolio ozeti"""
+    """Portfolio summary — with unrealized PnL"""
     summary = sim_engine.get_portfolio_summary()
     summary["positions"] = sim_engine.positions
     summary["recent_trades"] = sim_engine.closed_trades[-20:]
+
+    # Calculate unrealized PnL (from live cache)
+    try:
+        unrealized = sum(
+            lp.get("unrealized_pnl", 0)
+            for lp in live_cache.position_prices.values()
+        )
+        summary["unrealized_pnl"] = round(unrealized, 4)
+        summary["total_pnl"] = round(summary["realized_pnl"] + unrealized, 4)
+    except Exception:
+        pass
+
     return web.json_response(summary)
 
 
 async def handle_api_markets(request):
-    """Tum aktif marketleri getir"""
+    """Fetch all active markets"""
     category = request.query.get("category", "all")
     try:
         if category == "weather":
@@ -272,7 +282,7 @@ async def handle_api_markets(request):
         else:
             markets = await poly_client.get_all_active_markets(limit=100)
 
-        # Her market icin gerekli alanlari duzenle + CLOB'dan gercek fiyat
+        # Format required fields for each market + real price from CLOB
         cleaned = []
         token_ids_to_fetch = []
         market_token_map = []
@@ -288,7 +298,7 @@ async def handle_api_markets(request):
                 token_ids_to_fetch.append(no_tid)
             market_token_map.append((m, yes_token, no_token, yes_tid, no_tid))
 
-        # Batch fiyat cekimi
+        # Batch price fetch
         prices = await poly_client.get_token_prices_batch(token_ids_to_fetch) if token_ids_to_fetch else {}
 
         for m, yes_token, no_token, yes_tid, no_tid in market_token_map:
@@ -324,7 +334,7 @@ async def handle_api_markets(request):
 
 
 async def handle_api_opportunities(request):
-    """Arbitraj firsatlarini tara"""
+    """Scan for arbitrage opportunities"""
     try:
         weather_opps, btc_opps, metals_opps = await asyncio.gather(
             weather_engine.find_opportunities(),
@@ -349,7 +359,7 @@ async def handle_api_opportunities(request):
 
 
 async def handle_api_btc_prices(request):
-    """BTC fiyatlarini getir"""
+    """Fetch BTC prices"""
     try:
         prices = await price_agg.get_all_prices()
         avg = sum(prices.values()) / len(prices) if prices else 0
@@ -367,7 +377,7 @@ async def handle_api_btc_prices(request):
 
 
 async def handle_api_weather(request):
-    """NOAA hava durumu verilerini getir"""
+    """Fetch NOAA weather data"""
     try:
         noaa = NOAAClient()
         forecasts = await asyncio.gather(*[
@@ -386,7 +396,7 @@ async def handle_api_weather(request):
 
 
 async def handle_api_place_bet(request):
-    """Sanal bahis yap"""
+    """Place virtual bet"""
     try:
         data = await request.json()
         market_id = data.get("market_id", "")
@@ -408,6 +418,8 @@ async def handle_api_place_bet(request):
         if "error" in result:
             return web.json_response(result, status=400)
 
+        # Telegram handled by event detection in ws_broadcast_task
+
         return web.json_response({
             "success": True,
             "trade": result,
@@ -418,7 +430,7 @@ async def handle_api_place_bet(request):
 
 
 async def handle_api_resolve(request):
-    """Pozisyonu sonuclandir"""
+    """Resolve position"""
     try:
         data = await request.json()
         position_id = data.get("position_id", "")
@@ -427,6 +439,8 @@ async def handle_api_resolve(request):
         result = sim_engine.resolve_position(position_id, outcome)
         if "error" in result:
             return web.json_response(result, status=400)
+
+        # Telegram handled by event detection in ws_broadcast_task
 
         return web.json_response({
             "success": True,
@@ -438,8 +452,8 @@ async def handle_api_resolve(request):
 
 
 async def handle_api_reset_sim(request):
-    """Simulasyonu sifirla"""
-    # AutoTrader'i durdur
+    """Reset simulation"""
+    # Stop AutoTrader
     if auto_trader.running:
         auto_trader.stop()
 
@@ -449,7 +463,7 @@ async def handle_api_reset_sim(request):
     sim_engine.trade_history = []
     sim_engine.save_state()
 
-    # AutoTrader istatistiklerini sifirla
+    # Reset AutoTrader stats
     auto_trader.scan_count = 0
     auto_trader.auto_bets_placed = 0
     auto_trader.auto_resolves = 0
@@ -464,12 +478,12 @@ async def handle_api_reset_sim(request):
     return web.json_response({
         "success": True,
         "balance": sim_engine.balance,
-        "message": "Simulasyon sifirlandi"
+        "message": "Simulation reset"
     })
 
 
 async def handle_api_trade_history(request):
-    """Islem gecmisi"""
+    """Trade history"""
     limit = int(request.query.get("limit", "50"))
     return web.json_response({
         "trades": sim_engine.trade_history[-limit:],
@@ -478,7 +492,7 @@ async def handle_api_trade_history(request):
 
 
 async def handle_api_analysis(request):
-    """Olasilik analiz raporu"""
+    """Probability analysis report"""
     try:
         scan_file = DATA_DIR / "last_scan.json"
         scan_data = {}
@@ -515,26 +529,26 @@ async def handle_api_analysis(request):
 # --- AUTO-TRADER API ENDPOINTS ------------------------------------------------
 
 async def handle_auto_status(request):
-    """AutoTrader durumu"""
+    """AutoTrader status"""
     return web.json_response(auto_trader.get_status())
 
 
 async def handle_auto_start(request):
-    """AutoTrader'i baslat"""
+    """Start AutoTrader"""
     result = auto_trader.start()
     log.info(f"AutoTrader start: {result}")
     return web.json_response(result)
 
 
 async def handle_auto_stop(request):
-    """AutoTrader'i durdur"""
+    """Stop AutoTrader"""
     result = auto_trader.stop()
     log.info(f"AutoTrader stop: {result}")
     return web.json_response(result)
 
 
 async def handle_auto_config(request):
-    """AutoTrader konfigurasyonu guncelle"""
+    """Update AutoTrader configuration"""
     try:
         data = await request.json()
         result = auto_trader.update_config(**data)
@@ -544,9 +558,10 @@ async def handle_auto_config(request):
 
 
 async def handle_auto_scan_now(request):
-    """Tek seferlik tarama yap (AutoTrader loop'undan bagimsiz)"""
+    """Run one-off scan (independent from AutoTrader loop)"""
     try:
         result = await auto_trader.run_scan_cycle()
+        # Telegram handled by event detection in ws_broadcast_task
         return web.json_response(result)
     except Exception as e:
         log.error(f"Manual scan error: {e}")
@@ -555,7 +570,7 @@ async def handle_auto_scan_now(request):
 
 
 async def handle_pnl_history(request):
-    """PnL zaman serisi - grafik icin"""
+    """PnL time series -- for charts"""
     limit = int(request.query.get("limit", "200"))
     period = request.query.get("period", "all")  # all, 1h, 6h, 24h
 
@@ -581,14 +596,14 @@ async def handle_pnl_history(request):
     })
 
 async def handle_auto_logs(request):
-    """AutoTrader loglarini getir"""
+    """Fetch AutoTrader logs"""
     limit = int(request.query.get("limit", "50"))
     logs = auto_trader.stats.get("cycle_log", [])[-limit:]
     return web.json_response({"logs": logs, "total": len(auto_trader.stats.get("cycle_log", []))})
 
 
 async def handle_live_prices(request):
-    """Canli fiyat verisi - 3sn polling icin optimize edilmis hafif endpoint"""
+    """Live price data - lightweight endpoint optimized for 3s polling"""
     try:
         data = await live_cache.get_live_data()
         return web.json_response(data)
@@ -597,15 +612,15 @@ async def handle_live_prices(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
-# WebSocket baglantilari
+# WebSocket connections
 _ws_clients = set()
 
 async def handle_websocket(request):
-    """WebSocket endpoint - gercek zamanli canli veri akisi"""
+    """WebSocket endpoint - real-time live data stream"""
     ws = web.WebSocketResponse(heartbeat=30)
     await ws.prepare(request)
     _ws_clients.add(ws)
-    log.info(f"WS: Yeni baglanti, toplam: {len(_ws_clients)}")
+    log.info(f"WS: New connection, total: {len(_ws_clients)}")
 
     try:
         async for msg in ws:
@@ -631,51 +646,94 @@ async def handle_websocket(request):
         log.error(f"WS error: {e}")
     finally:
         _ws_clients.discard(ws)
-        log.info(f"WS: Baglanti kapandi, kalan: {len(_ws_clients)}")
+        log.info(f"WS: Connection closed, remaining: {len(_ws_clients)}")
 
     return ws
 
 
 async def ws_broadcast_task(app):
-    """WebSocket broadcast gorevi - her 3sn canli veri gonder"""
-    global _ws_clients
+    """WebSocket broadcast — every 3s send live data + detect trade events for Telegram"""
+    # Event detection: track counts to catch new trades (both manual + auto)
+    _prev_trade_count = len(sim_engine.trade_history)
+    _prev_closed_count = len(sim_engine.closed_trades)
+    tg = get_telegram_bot()
+
     while True:
         try:
             await asyncio.sleep(3)
-            if not _ws_clients:
-                continue
 
-            # Her 30sn'de PnL snapshot kaydet
+            # ── EVENT DETECTION: new trades opened ──
+            curr_trade_count = len(sim_engine.trade_history)
+            if curr_trade_count > _prev_trade_count:
+                for trade in sim_engine.trade_history[_prev_trade_count:]:
+                    try:
+                        asyncio.ensure_future(tg.notify_trade_opened(trade))
+                    except Exception as te:
+                        log.error(f"Telegram trade-open notify error: {te}")
+                _prev_trade_count = curr_trade_count
+
+            # ── EVENT DETECTION: positions closed ──
+            curr_closed_count = len(sim_engine.closed_trades)
+            if curr_closed_count > _prev_closed_count:
+                for trade in sim_engine.closed_trades[_prev_closed_count:]:
+                    try:
+                        asyncio.ensure_future(tg.notify_trade_closed(trade))
+                    except Exception as te:
+                        log.error(f"Telegram trade-close notify error: {te}")
+                _prev_closed_count = curr_closed_count
+
+            # ── DAILY REPORT CHECK (midnight) ──
+            try:
+                await tg.check_daily_report()
+            except Exception:
+                pass
+
+            # PnL snapshot every ~30s (with or without clients)
             if live_cache.tick_count % 10 == 0:
                 try:
                     record_pnl_snapshot()
                 except Exception:
                     pass
 
+            # Skip data collection if no clients
+            if not _ws_clients:
+                continue
+
             data = await live_cache.get_live_data()
             summary = sim_engine.get_portfolio_summary()
+            # Unrealized PnL from live cache
+            try:
+                unrealized = sum(
+                    lp.get("unrealized_pnl", 0) for lp in live_cache.position_prices.values()
+                )
+                summary["unrealized_pnl"] = round(unrealized, 4)
+                summary["total_pnl"] = round(summary["realized_pnl"] + unrealized, 4)
+            except Exception:
+                pass
             data["portfolio_full"] = summary
             data["positions"] = sim_engine.positions
-            data["position_prices"] = live_cache.position_prices  # canlı pozisyon fiyatları
+            data["position_prices"] = live_cache.position_prices
+            data["closed_trades"] = sim_engine.closed_trades[-30:]
             data["auto_status"] = {
                 "running": auto_trader.running,
                 "scan_count": auto_trader.scan_count,
                 "auto_bets": auto_trader.auto_bets_placed,
                 "auto_resolves": auto_trader.auto_resolves,
                 "next_scan": auto_trader.next_scan_time,
+                "scan_interval": auto_trader.scan_interval,
                 "daily_spent": round(auto_trader.daily_spent, 2),
                 "last_logs": auto_trader.stats.get("cycle_log", [])[-5:],
-                "last_opportunities": auto_trader.stats.get("last_opportunities", [])[:10],
+                "last_opportunities": auto_trader.stats.get("last_opportunities", [])[:30],
             }
 
             msg = json.dumps({"type": "live_update", "data": data}, default=str)
-            dead = set()
-            for ws in list(_ws_clients):
+            # Use discard() instead of -= dead — avoids global scope error
+            for client in list(_ws_clients):
                 try:
-                    await ws.send_str(msg)
+                    await client.send_str(msg)
                 except Exception:
-                    dead.add(ws)
-            _ws_clients -= dead
+                    _ws_clients.discard(client)
+
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -684,11 +742,21 @@ async def ws_broadcast_task(app):
 
 async def start_ws_broadcast(app):
     load_pnl_history()
-    record_pnl_snapshot()  # İlk snapshot
+    record_pnl_snapshot()  # Initial snapshot
     app["ws_task"] = asyncio.ensure_future(ws_broadcast_task(app))
+
+    # Start Telegram bot
+    tg = get_telegram_bot()
+    tg.set_engines(sim_engine, auto_trader, live_cache)
+    tg.start_polling()
+    log.info("Telegram bot polling started" if tg.enabled else "Telegram bot disabled")
 
 
 async def stop_ws_broadcast(app):
+    # Stop Telegram bot
+    tg = get_telegram_bot()
+    tg.stop_polling()
+
     task = app.get("ws_task")
     if task:
         task.cancel()
@@ -725,7 +793,7 @@ def create_app():
     static_dir = PROJECT_ROOT / "static"
     static_dir.mkdir(exist_ok=True)
 
-    # Mevcut Routes
+    # Routes
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/status", handle_api_status)
     app.router.add_get("/api/portfolio", handle_api_portfolio)
@@ -748,7 +816,7 @@ def create_app():
     app.router.add_get("/api/auto/logs", handle_auto_logs)
     app.router.add_get("/api/pnl-history", handle_pnl_history)
 
-    # Live price endpoint (3sn polling)
+    # Live price endpoint (3s polling)
     app.router.add_get("/api/live-prices", handle_live_prices)
 
     # WebSocket endpoint
@@ -757,7 +825,7 @@ def create_app():
     # Serve static files
     app.router.add_static("/static/", path=str(static_dir), name="static")
 
-    # WebSocket broadcast gorevi
+    # WebSocket broadcast task
     app.on_startup.append(start_ws_broadcast)
     app.on_shutdown.append(stop_ws_broadcast)
 
@@ -766,6 +834,6 @@ def create_app():
 
 if __name__ == "__main__":
     port = int(os.getenv("WEB_PORT", "8080"))
-    log.info(f"Web dashboard baslatiliyor: http://localhost:{port}")
+    log.info(f"Web dashboard starting: http://localhost:{port}")
     app = create_app()
     web.run_app(app, host="0.0.0.0", port=port)

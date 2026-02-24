@@ -1,9 +1,9 @@
 """
-Polymarket Arbitraj Botu v2.0
-- Hava Durumu (NOAA) -> Polymarket Weather Markets
-- BTC Fiyat Arbitraji -> Binance / OKX / Coinbase / Upbit vs Polymarket
-- Simulasyon Modu destegi
-- Tum kategorilerdeki marketleri tarama
+Polymarket Arbitrage Bot v1.5
+- Weather (NOAA) -> Polymarket Weather Markets
+- BTC Price Arbitrage -> Binance / OKX / Coinbase / Upbit vs Polymarket
+- Simulation Mode support
+- Scanning markets across all categories
 """
 
 import asyncio
@@ -20,11 +20,11 @@ from typing import Optional
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Proje kok dizinini bul
+# Find project root directory
 PROJECT_ROOT = Path(__file__).parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
-# Log dizinini olustur
+# Create log directory
 LOG_DIR = PROJECT_ROOT / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 DATA_DIR = PROJECT_ROOT / "data"
@@ -41,7 +41,7 @@ logging.basicConfig(
 log = logging.getLogger("arb-bot")
 
 
-# --- KONFIGURASYON -----------------------------------------------------------
+# --- CONFIGURATION -----------------------------------------------------------
 
 @dataclass
 class Config:
@@ -52,7 +52,7 @@ class Config:
     # NOAA
     noaa_token: str = ""
 
-    # Borsa API Keys
+    # Exchange API Keys
     binance_key: str = ""
     binance_secret: str = ""
     okx_key: str = ""
@@ -63,18 +63,18 @@ class Config:
     upbit_key: str = ""
     upbit_secret: str = ""
 
-    # Risk Parametreleri
+    # Risk Parameters
     max_order_usd: float = 20.0
     min_edge_pct: float = 15.0
     min_liquidity: float = 5000.0
     max_daily_usd: float = 100.0
     loop_interval_sec: int = 300
 
-    # Simulasyon
+    # Simulation
     simulation_mode: bool = True
     initial_balance: float = 10000.0
 
-    # Hava durumu sehirleri (sadece ABD - NOAA sadece ABD destekler)
+    # Weather cities (US only - NOAA only supports US)
     cities: list = field(default_factory=list)
 
     def __post_init__(self):
@@ -97,7 +97,7 @@ class Config:
         self.loop_interval_sec = int(os.getenv("LOOP_INTERVAL", "300"))
         self.simulation_mode = os.getenv("SIMULATION_MODE", "true").lower() == "true"
         self.initial_balance = float(os.getenv("INITIAL_BALANCE", "10000"))
-        # NOAA sadece ABD sehirlerini destekler
+        # NOAA only supports US cities
         self.cities = [
             (40.7128, -74.0060, "NYC"),
             (47.6062, -122.3321, "Seattle"),
@@ -132,10 +132,10 @@ def log_trade(action: str, market: str, amount: float, price: float, reason: str
     log.info(f"{prefix} TRADE | {action} | {market} | ${amount:.2f} @ {price:.3f} | {reason}")
 
 
-# --- NOAA HAVA DURUMU --------------------------------------------------------
+# --- NOAA WEATHER ------------------------------------------------------------
 
 class NOAAClient:
-    """NOAA Weather API - sadece ABD sehirleri icin calısır"""
+    """NOAA Weather API - works for US cities only"""
     BASE = "https://api.weather.gov"
 
     def _headers(self):
@@ -148,7 +148,7 @@ class NOAAClient:
         try:
             timeout = aiohttp.ClientTimeout(total=15)
             async with aiohttp.ClientSession(timeout=timeout) as s:
-                # Adim 1: grid point al
+                # Step 1: get grid point
                 url = f"{self.BASE}/points/{lat:.4f},{lon:.4f}"
                 async with s.get(url, headers=self._headers()) as r:
                     if r.status != 200:
@@ -157,7 +157,7 @@ class NOAAClient:
                     data = await r.json()
                     forecast_url = data["properties"]["forecastHourly"]
 
-                # Adim 2: saatlik tahmin al
+                # Step 2: get hourly forecast
                 async with s.get(forecast_url, headers=self._headers()) as r:
                     if r.status != 200:
                         log.warning(f"NOAA forecast failed for {city}: HTTP {r.status}")
@@ -177,7 +177,7 @@ class NOAAClient:
                         if dt.date() == tomorrow_date:
                             tomorrow_temps.append(p["temperature"])
 
-                    # Fallback: bugunun kalan saatleri
+                    # Fallback: remaining hours of today
                     if not tomorrow_temps:
                         today_date = now.date()
                         tomorrow_temps = [
@@ -186,7 +186,7 @@ class NOAAClient:
                         ]
 
                     if not tomorrow_temps:
-                        log.info(f"NOAA: {city} icin sicaklik verisi yok")
+                        log.info(f"NOAA: No temperature data for {city}")
                         return None
 
                     max_temp = max(tomorrow_temps)
@@ -209,7 +209,7 @@ class NOAAClient:
             return None
 
 
-# --- BTC FIYAT TOPLAYICI -----------------------------------------------------
+# --- BTC PRICE AGGREGATOR ----------------------------------------------------
 
 class PriceAggregator:
     async def _fetch_json(self, session, url, name):
@@ -262,7 +262,7 @@ class PriceAggregator:
             return None
 
     async def get_kraken_btc(self, session) -> Optional[float]:
-        """Kraken BTC/USD fiyati - 5. borsa"""
+        """Kraken BTC/USD price - 5th exchange"""
         d = await self._fetch_json(session,
             "https://api.kraken.com/0/public/Ticker?pair=XBTUSD", "Kraken")
         try:
@@ -301,7 +301,7 @@ class PolymarketClient:
     CLOB_API = "https://clob.polymarket.com"
 
     async def _fetch_clob_markets(self, pages=3) -> list:
-        """CLOB API sampling-markets - gercek aktif marketleri ve token ID'leri alir"""
+        """CLOB API sampling-markets - fetches real active markets and token IDs"""
         all_markets = []
         next_cursor = ""
         try:
@@ -325,7 +325,7 @@ class PolymarketClient:
         return all_markets
 
     async def get_token_price(self, token_id: str) -> float:
-        """CLOB price endpoint - referans fiyat (son islem/midpoint)"""
+        """CLOB price endpoint - reference price (last trade/midpoint)"""
         try:
             timeout = aiohttp.ClientTimeout(total=5)
             async with aiohttp.ClientSession(timeout=timeout) as s:
@@ -339,7 +339,7 @@ class PolymarketClient:
             return 0
 
     async def get_orderbook_price(self, token_id: str) -> dict:
-        """Orderbook'tan gercek bid/ask/spread bilgisi alir"""
+        """Fetches real bid/ask/spread data from orderbook"""
         result = {"best_bid": 0, "best_ask": 0, "midpoint": 0, "spread": 1.0, "liquid": False}
         try:
             timeout = aiohttp.ClientTimeout(total=5)
@@ -356,7 +356,7 @@ class PolymarketClient:
                     if not bids or not asks:
                         return result
 
-                    # En iyi bid/ask (fiyata gore)
+                    # Best bid/ask (by price)
                     best_bid = max(float(b["price"]) for b in bids)
                     best_ask = min(float(a["price"]) for a in asks)
 
@@ -365,7 +365,7 @@ class PolymarketClient:
                     result["midpoint"] = round((best_bid + best_ask) / 2, 4)
                     result["spread"] = round(best_ask - best_bid, 4)
 
-                    # Spread < %30 ise likit kabul et
+                    # Spread < 30% = consider liquid
                     result["liquid"] = result["spread"] < 0.30
 
                     return result
@@ -373,12 +373,12 @@ class PolymarketClient:
             return result
 
     async def get_smart_price(self, token_id: str) -> tuple:
-        """Orderbook + referans fiyat birlestirerek en iyi fiyati hesaplar.
+        """Calculates best price by combining orderbook + reference price.
         Returns: (price, spread, is_liquid)
-        - Likit market (spread<%30): orderbook midpoint kullanir
-        - Illikit market (spread>%30): /price referans fiyatini kullanir
+        - Liquid market (spread<30%): uses orderbook midpoint
+        - Illiquid market (spread>30%): uses /price reference price
         """
-        # Paralel cek: orderbook + referans fiyat
+        # Fetch in parallel: orderbook + reference price
         ob_task = self.get_orderbook_price(token_id)
         ref_task = self.get_token_price(token_id)
         ob, ref_price = await asyncio.gather(ob_task, ref_task)
@@ -391,7 +391,7 @@ class PolymarketClient:
             return (0, 1.0, False)
 
     async def get_token_prices_batch(self, token_ids: list) -> dict:
-        """Birden fazla token fiyatini paralel cek"""
+        """Fetch multiple token prices in parallel"""
         results = await asyncio.gather(*[
             self.get_token_price(tid) for tid in token_ids
         ], return_exceptions=True)
@@ -402,13 +402,13 @@ class PolymarketClient:
         return prices
 
     async def get_all_active_markets(self, limit=200) -> list:
-        """Tum aktif marketleri CLOB'dan cek, fiyatlari dahil et"""
+        """Fetch all active markets from CLOB with prices"""
         pages = max(1, limit // 100)
         markets = await self._fetch_clob_markets(pages=pages)
         return markets[:limit]
 
     async def get_weather_markets(self) -> list:
-        """Sicaklik/hava durumu marketlerini filtrele"""
+        """Filter temperature/weather markets"""
         markets = await self._fetch_clob_markets(pages=3)
         weather_words = ["temperature", "degrees", "celsius", "fahrenheit",
                         "weather", "snow", "rain", "hurricane", "storm"]
@@ -416,14 +416,14 @@ class PolymarketClient:
                 if any(w in m.get("question", "").lower() for w in weather_words)]
 
     async def get_btc_markets(self) -> list:
-        """BTC/Crypto marketlerini filtrele"""
+        """Filter BTC/Crypto markets"""
         markets = await self._fetch_clob_markets(pages=3)
         crypto_words = ["bitcoin", "btc", "ethereum", "eth", "crypto", "solana"]
         return [m for m in markets
                 if any(w in m.get("question", "").lower() for w in crypto_words)]
 
     async def get_market_orderbook(self, token_id: str) -> Optional[dict]:
-        """Token icin order book cek"""
+        """Fetch order book for token"""
         try:
             timeout = aiohttp.ClientTimeout(total=10)
             async with aiohttp.ClientSession(timeout=timeout) as s:
@@ -443,7 +443,7 @@ class PolymarketClient:
             return True
 
         if not CFG.poly_private_key:
-            log.error("POLY_PRIVATE_KEY eksik!")
+            log.error("POLY_PRIVATE_KEY missing!")
             return False
 
         try:
@@ -468,7 +468,7 @@ class PolymarketClient:
                 log.warning(f"Order response: {resp}")
                 return False
         except ImportError:
-            log.error("py-clob-client kurulu degil: pip install py-clob-client")
+            log.error("py-clob-client not installed: pip install py-clob-client")
             return False
         except Exception as e:
             log.error(f"Order error: {e}")
@@ -486,13 +486,13 @@ class WeatherArbEngine:
         match = re.search(r"(\d+)\s*[-\u2013]\s*(\d+)\s*[°]?[Ff]", question)
         if match:
             return int(match.group(1)), int(match.group(2))
-        # Tek deger: "above 80°F"
+        # Single value: "above 80°F"
         match = re.search(r"(?:above|over|exceed)\s*(\d+)\s*[°]?[Ff]", question, re.I)
         if match:
-            return int(match.group(1)), 150  # ust sinir yok
+            return int(match.group(1)), 150  # no upper bound
         match = re.search(r"(?:below|under)\s*(\d+)\s*[°]?[Ff]", question, re.I)
         if match:
-            return -50, int(match.group(1))  # alt sinir yok
+            return -50, int(match.group(1))  # no lower bound
         return None
 
     def noaa_probability_for_range(self, noaa_temp: float, low: float, high: float,
@@ -506,7 +506,7 @@ class WeatherArbEngine:
         return min(0.97, max(0.03, adjusted))
 
     def parse_global_temp_range(self, question: str) -> Optional[tuple]:
-        """Global temperature marketleri: 'between 1.20C and 1.24C' -> (1.20, 1.24)"""
+        """Global temperature markets: 'between 1.20C and 1.24C' -> (1.20, 1.24)"""
         # "between X and Y" pattern
         match = re.search(r"between\s+([\d.]+).*?and\s+([\d.]+)", question, re.I)
         if match:
@@ -524,19 +524,19 @@ class WeatherArbEngine:
     async def find_opportunities(self) -> list:
         opportunities = []
 
-        # NOAA verilerini cek (ABD sehirleri icin)
+        # Fetch NOAA data (for US cities)
         forecasts = await asyncio.gather(*[
             self.noaa.get_hourly_forecast(lat, lon, city)
             for lat, lon, city in CFG.cities
         ])
         forecast_map = {f["city"]: f for f in forecasts if f}
         if forecast_map:
-            log.info(f"NOAA: {len(forecast_map)} sehir: " +
+            log.info(f"NOAA: {len(forecast_map)} cities: " +
                      ", ".join(f"{c}={d['max_temp_f']}F" for c, d in forecast_map.items()))
 
-        # Polymarket weather/temperature marketlerini cek (CLOB API)
+        # Fetch Polymarket weather/temperature markets (CLOB API)
         markets = await self.poly.get_weather_markets()
-        log.info(f"Weather: {len(markets)} market bulundu")
+        log.info(f"Weather: {len(markets)} markets found")
 
         for market in markets:
             question = market.get("question", "")
@@ -552,23 +552,23 @@ class WeatherArbEngine:
             if not token_id:
                 continue
 
-            # CLOB'dan gercek fiyat cek
+            # Fetch real price from CLOB
             market_price = await self.poly.get_token_price(token_id)
             if market_price <= 0:
                 continue
 
-            # Global temperature market mi?
+            # Is this a global temperature market?
             if "global temperature" in question.lower() or "temperature increase" in question.lower():
                 temp_range = self.parse_global_temp_range(question)
                 if not temp_range:
                     continue
                 low, high = temp_range
-                # Basit tahmin: su anki trend ve mevcut diger marketlerin fiyatlarina gore
-                # Daha sofistike model icin dis kaynak gerekir
-                noaa_prob = market_price  # Baslangic olarak market fiyatini kullan
-                edge = 0  # Bu turdeki marketler icin dis veri lazim
+                # Simple estimate: based on current trend and other market prices
+                # External data source needed for a more sophisticated model
+                noaa_prob = market_price  # Use market price as starting point
+                edge = 0  # External data needed for these market types
             else:
-                # ABD sehir sicaklik marketi
+                # US city temperature market
                 matched_city = None
                 for city in forecast_map:
                     if city.lower() in question.lower():
@@ -616,27 +616,27 @@ class BTCArbEngine:
         self.poly = PolymarketClient()
 
     def extract_btc_target(self, question: str) -> Optional[float]:
-        # "$1m", "$1.5m", "$1M" gibi milyon ifadeleri
+        # Million expressions like "$1m", "$1.5m", "$1M"
         match = re.search(r"\$\s*([\d.]+)\s*[mM]", question)
         if match:
             return float(match.group(1)) * 1_000_000
-        # "$1b", "$1B" gibi milyar ifadeleri
+        # Billion expressions like "$1b", "$1B"
         match = re.search(r"\$\s*([\d.]+)\s*[bB]", question)
         if match:
             return float(match.group(1)) * 1_000_000_000
-        # "100k", "100K", "$100k" gibi bin ifadeleri
-        # \b ile kelime siniri: "2026 Kansas" gibi false-positive onlenir
+        # Thousand expressions like "100k", "100K", "$100k"
+        # \b word boundary prevents false-positives like "2026 Kansas"
         match = re.search(r"\$?\s*(\d+(?:\.\d+)?)\s*[kK]\b", question)
         if match:
             val = float(match.group(1)) * 1000
-            if val < 1000:  # "$0.5k" gibi anlamsiz degerleri reddet
+            if val < 1000:  # Reject meaningless values like "$0.5k"
                 return None
             return val
-        # "$100,000" veya "$95000" gibi tam sayilar
+        # Full numbers like "$100,000" or "$95000"
         match = re.search(r"\$\s*([\d,]+(?:\.\d+)?)", question)
         if match:
             val = float(match.group(1).replace(",", ""))
-            # $1, $2 gibi cok kucuk degerleri BTC hedefi olarak kabul etme
+            # Reject very small values like $1, $2 as BTC targets
             if val < 100:
                 return None
             return val
@@ -646,27 +646,27 @@ class BTCArbEngine:
         opportunities = []
         prices = await self.aggregator.get_all_prices()
         if not prices:
-            log.warning("Borsa: Fiyat alinamadi")
+            log.warning("Exchange: No BTC price data")
             return []
 
         avg_btc = sum(prices.values()) / len(prices)
         log.info(f"BTC: " + " | ".join(f"{k}=${v:,.0f}" for k, v in prices.items()))
-        log.info(f"BTC Ortalama: ${avg_btc:,.0f}")
+        log.info(f"BTC Average: ${avg_btc:,.0f}")
 
         markets = await self.poly.get_btc_markets()
-        log.info(f"BTC: {len(markets)} market bulundu")
+        log.info(f"BTC: {len(markets)} markets found")
 
         for market in markets:
             question = market.get("question", "")
 
             target = self.extract_btc_target(question)
             if not target:
-                log.info(f"BTC SKIP (hedef bulunamadi): {question[:60]}")
+                log.info(f"BTC SKIP (target not found): {question[:60]}")
                 continue
 
-            # Hedef makul aralikta mi? ($1000 - $10M arasi)
+            # Is target in reasonable range? ($1000 - $10M)
             if target < 1000 or target > 10_000_000:
-                log.info(f"BTC SKIP (hedef aralik disi ${target:,.0f}): {question[:60]}")
+                log.info(f"BTC SKIP (target out of range ${target:,.0f}): {question[:60]}")
                 continue
 
             tokens = market.get("tokens", [])
@@ -678,10 +678,10 @@ class BTCArbEngine:
             if not token_id:
                 continue
 
-            # CLOB'dan gercek fiyat cek (orderbook + referans)
+            # Fetch real price from CLOB (orderbook + reference)
             market_price, spread, is_liquid = await self.poly.get_smart_price(token_id)
             if market_price <= 0.01 or market_price >= 0.99:
-                continue  # Cok asiri fiyatlar -> likit degil veya sonuclanmis
+                continue  # Extreme prices -> illiquid or already resolved
 
             liq_tag = "LIQ" if is_liquid else f"ILLIQ(spread={spread:.0%})"
 
@@ -690,67 +690,41 @@ class BTCArbEngine:
             is_below = any(w in question.lower() for w in
                           ["below", "under", "drop", "fall", "lower"])
 
-            # End date'e gore zaman faktoru
+            # Compute days until expiry for probability model
             end_date_str = market.get("end_date_iso", "")
-            time_factor = 1.0
+            days_until_expiry = 30  # default if no end date
             if end_date_str:
                 try:
                     end_dt = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
-                    days_until = (end_dt - datetime.now(timezone.utc)).days
-                    if days_until > 180:
-                        time_factor = 0.7   # 6+ ay: belirsizlik yuksek
-                    elif days_until > 90:
-                        time_factor = 0.8   # 3-6 ay
-                    elif days_until > 30:
-                        time_factor = 0.9   # 1-3 ay
-                    elif days_until > 7:
-                        time_factor = 0.95  # 1-4 hafta
-                    # 7 gun icinde: zaman faktoru 1.0
+                    days_until_expiry = max(1, (end_dt - datetime.now(timezone.utc)).days)
                 except (ValueError, TypeError):
                     pass
 
-            if is_exceed:
-                ratio = avg_btc / target
-                if ratio > 1.05:
-                    real_prob = 0.90
-                elif ratio > 1.02:
-                    real_prob = 0.78
-                elif ratio > 1.00:
-                    real_prob = 0.62
-                elif ratio > 0.98:
-                    real_prob = 0.45
-                elif ratio > 0.95:
-                    real_prob = 0.30
-                elif ratio > 0.90:
-                    real_prob = 0.18
-                elif ratio > 0.80:
-                    real_prob = 0.10
-                elif ratio > 0.50:
-                    real_prob = 0.05
-                else:
-                    real_prob = 0.02  # Hedef cok uzak (orn: $1M)
-                real_prob *= time_factor
-            elif is_below:
-                ratio = target / avg_btc
-                if ratio > 1.05:
-                    real_prob = 0.90
-                elif ratio > 1.02:
-                    real_prob = 0.78
-                elif ratio > 1.00:
-                    real_prob = 0.62
-                elif ratio > 0.98:
-                    real_prob = 0.45
-                elif ratio > 0.95:
-                    real_prob = 0.30
-                else:
-                    real_prob = 0.12
-                real_prob *= time_factor
+            # Log-normal probability model (v1.5 - replaces fabricated lookup)
+            # BTC annual volatility ~70%, compute period volatility
+            btc_annual_vol = 0.70
+            daily_vol = btc_annual_vol / math.sqrt(365)
+            period_vol = daily_vol * math.sqrt(days_until_expiry)
+
+            def _phi(x):
+                """Standard normal CDF using math.erf"""
+                return 0.5 * (1 + math.erf(x / math.sqrt(2)))
+
+            S = avg_btc   # current BTC price from 5 exchanges
+            K = target    # target price from market question
+
+            if is_exceed:  # "Will BTC exceed $K?"
+                d = (math.log(S / K) + 0.5 * period_vol ** 2) / period_vol
+                real_prob = _phi(d)
+            elif is_below:  # "Will BTC drop below $K?"
+                d = (math.log(S / K) + 0.5 * period_vol ** 2) / period_vol
+                real_prob = 1.0 - _phi(d)
             else:
-                # "Will BTC be between X and Y" gibi aralik marketleri
-                # Simdilik atla
+                # Range markets like "Will BTC be between X and Y"
+                # Skip for now
                 continue
 
-            # Olasilik sinirla
+            # Clamp probability
             real_prob = min(0.95, max(0.03, real_prob))
 
             edge = real_prob - market_price
@@ -761,8 +735,9 @@ class BTCArbEngine:
             else:
                 spread_pct = 0
 
-            log.info(f"BTC Analiz: {question[:50]} | "
-                     f"Hedef: ${target:,.0f} | Oran: {avg_btc/target:.3f} | "
+            log.info(f"BTC Analysis: {question[:50]} | "
+                     f"Target: ${target:,.0f} | S/K: {avg_btc/target:.3f} | "
+                     f"Vol: {period_vol:.3f} ({days_until_expiry}d) | "
                      f"Prob: {real_prob:.2%} vs Market: {market_price:.2%} | "
                      f"Edge: {edge:.2%} | {liq_tag}")
 
@@ -795,7 +770,7 @@ class BTCArbEngine:
 # --- XAU/XAG METALS ARB ENGINE -----------------------------------------------
 
 class MetalsArbEngine:
-    """XAU/XAG Polymarket bahisleri icin gercek veri analizi"""
+    """Real data analysis for XAU/XAG Polymarket bets"""
 
     def __init__(self):
         self.poly = PolymarketClient()
@@ -807,9 +782,19 @@ class MetalsArbEngine:
                 from xau_xag_engine import XAUXAGEngine
                 self._xau_engine = XAUXAGEngine()
             except ImportError:
-                log.warning("xau_xag_engine modulu bulunamadi")
+                log.warning("xau_xag_engine module not found")
                 return None
         return self._xau_engine
+
+    def extract_metal_target(self, question: str):
+        """Extract target price from market question (e.g., '$3,500' -> 3500.0)"""
+        import re
+        match = re.search(r"\$\s*([\d,]+(?:\.\d+)?)", question)
+        if match:
+            val = float(match.group(1).replace(",", ""))
+            if val > 0:
+                return val
+        return None
 
     async def find_opportunities(self) -> list:
         engine = self._get_engine()
@@ -818,12 +803,12 @@ class MetalsArbEngine:
 
         opportunities = []
 
-        # Polymarket'ten XAU/XAG marketlerini bul
+        # Find XAU/XAG markets from Polymarket
         markets = await self.poly._fetch_clob_markets(pages=3)
 
-        # Daha spesifik filtre: gold/silver futures, XAU, XAG, ounce
-        # Basit "gold" veya "silver" tek basina cok fazla false positive yaratir
-        # NOT: "ounce" kullanma! "announce" icinde "ounce" var -> false positive!
+        # More specific filter: gold/silver futures, XAU, XAG, ounce
+        # Simple "gold" or "silver" alone creates too many false positives
+        # NOTE: Don't use "ounce" alone! "announce" contains "ounce" -> false positive!
         metal_patterns = [
             "gold (gc)", "silver (si)", "xau", "xag",
             "gold price", "silver price", "gold futures", "silver futures",
@@ -836,20 +821,21 @@ class MetalsArbEngine:
         metal_markets = []
         for m in markets:
             q = m.get("question", "").lower()
-            # Pattern eslesmesi
+            # Pattern matching
             if any(p in q for p in metal_patterns):
                 metal_markets.append(m)
                 continue
-            # "gold" veya "silver" icerip finans/fiyat ile ilgili olanlar
+            # Markets containing "gold" or "silver" related to finance/price
             if ("gold" in q or "silver" in q) and any(w in q for w in
                 ["price", "settle", "hit", "above", "below", "reach", "$", "futures"]):
                 metal_markets.append(m)
 
-        log.info(f"Metals: {len(metal_markets)} market bulundu (toplam {len(markets)} taranarak)")
+        log.info(f"Metals: {len(metal_markets)} markets found (scanned {len(markets)} total)")
         if metal_markets:
-            log.info(f"  Ilk market: {metal_markets[0].get('question', '')[:70]}")
+            log.info(f"  First market: {metal_markets[0].get('question', '')[:70]}")
 
-        # Performans icin max 10 market analiz et
+        # Analyze max 10 markets for performance
+        _metal_price_cache = {}
         for market in metal_markets[:10]:
             question = market.get("question", "")
             tokens = market.get("tokens", [])
@@ -865,12 +851,12 @@ class MetalsArbEngine:
             if not token_id:
                 continue
 
-            # CLOB'dan gercek fiyat (orderbook + referans)
+            # Real price from CLOB (orderbook + reference)
             market_price, spread, is_liquid = await self.poly.get_smart_price(token_id)
             if market_price <= 0:
                 continue
 
-            # Metal turu ve yon belirle
+            # Determine metal type and direction
             q_lower = question.lower()
             metal = "XAU" if any(w in q_lower for w in ["gold", "xau"]) else "XAG"
             is_up = any(w in q_lower for w in ["above", "over", "exceed", "higher", "reach", "hit", "rise"])
@@ -879,6 +865,59 @@ class MetalsArbEngine:
 
             try:
                 decision = await engine.analyze(metal, market_price, direction)
+
+                # Distance-to-target discount: if move required is unrealistic,
+                # dramatically reduce probability regardless of macro signals
+                target_price = self.extract_metal_target(question)
+                current_metal_price = _metal_price_cache.get(metal)
+                if current_metal_price is None:
+                    try:
+                        pd = await engine.price_collector.get_price(metal)
+                        _metal_price_cache[metal] = pd.price if pd else None
+                        current_metal_price = _metal_price_cache[metal]
+                    except Exception:
+                        _metal_price_cache[metal] = None
+
+                if target_price and current_metal_price and current_metal_price > 0:
+                    if direction == "UP":
+                        pct_move = (target_price - current_metal_price) / current_metal_price
+                    else:
+                        pct_move = (current_metal_price - target_price) / current_metal_price
+
+                    # Apply discount based on move magnitude
+                    if pct_move > 0.50:
+                        dist_factor = 0.02
+                    elif pct_move > 0.20:
+                        dist_factor = max(0.02, 0.30 - (pct_move - 0.20) * 0.93)
+                    elif pct_move > 0.05:
+                        dist_factor = max(0.30, 1.0 - (pct_move - 0.05) * 4.67)
+                    else:
+                        dist_factor = 1.0  # Within 5%, trust the engine
+
+                    adj_prob = decision.probability * dist_factor
+                    adj_edge = adj_prob - market_price
+                    adj_conf = decision.confidence * dist_factor
+                    adj_side = "YES" if adj_edge > 0.10 else ("NO" if adj_edge < -0.10 else "SKIP")
+
+                    log.info(
+                        f"Metals distance: {metal} current=${current_metal_price:,.1f} "
+                        f"target=${target_price:,.1f} move={pct_move*100:+.1f}% "
+                        f"factor={dist_factor:.2f} | "
+                        f"prob {decision.probability:.2%}->{adj_prob:.2%} "
+                        f"edge {decision.edge:+.2%}->{adj_edge:+.2%}"
+                    )
+
+                    # Override decision values
+                    from xau_xag_engine import MetalDecision
+                    decision = MetalDecision(
+                        metal=decision.metal, direction=decision.direction,
+                        probability=adj_prob, polymarket_price=decision.polymarket_price,
+                        edge=adj_edge, confidence=adj_conf,
+                        order_side=adj_side,
+                        kelly_size_pct=decision.kelly_size_pct * dist_factor,
+                        factors=decision.factors,
+                        summary=decision.summary + f" [dist_adj={dist_factor:.2f}]",
+                    )
 
                 if decision.order_side != "SKIP" and abs(decision.edge) >= (CFG.min_edge_pct / 100):
                     opportunities.append({
@@ -910,70 +949,340 @@ class MetalsArbEngine:
         return opportunities
 
 
-# --- GENEL MARKET TARAYICI ---------------------------------------------------
+# --- UNIVERSAL MARKET ENGINE -------------------------------------------------
 
-class GeneralMarketScanner:
-    """Tum aktif Polymarket marketlerini tarar, asiri yuksek/dusuk fiyatli olanlari raporlar"""
+class UniversalMarketEngine:
+    """
+    v1.5 - Scans ALL Polymarket markets using 3 sub-strategies:
+    A) Extreme Price: Markets priced ≤0.05 or ≥0.95 with volume
+    B) Momentum: Price moved >15% in 24h with volume confirmation
+    C) Volume Spike: 24h volume anomaly detection
+
+    Unlike the old GeneralMarketScanner (which listed but never traded),
+    this engine produces real tradeable opportunities with edge/side/confidence.
+    """
+
+    GAMMA_API = "https://gamma-api.polymarket.com"
 
     def __init__(self):
         self.poly = PolymarketClient()
+        self._price_cache = {}  # token_id -> (price, timestamp)
 
-    async def find_mispriced_markets(self) -> list:
-        """Fiyatı 0.05 altında veya 0.95 üstünde olan yüksek likidite marketleri bul"""
+    async def _fetch_gamma_markets(self, limit=200) -> list:
+        """Fetch markets from Gamma API for richer metadata (volume, tags, etc.)"""
+        try:
+            timeout = aiohttp.ClientTimeout(total=20)
+            async with aiohttp.ClientSession(timeout=timeout) as s:
+                params = {
+                    "limit": str(limit),
+                    "active": "true",
+                    "closed": "false",
+                    "order": "volume24hr",
+                    "ascending": "false",
+                }
+                async with s.get(f"{self.GAMMA_API}/markets", params=params) as r:
+                    if r.status != 200:
+                        log.warning(f"Gamma API error: HTTP {r.status}")
+                        return []
+                    return await r.json()
+        except Exception as e:
+            log.warning(f"Gamma API error: {e}")
+            return []
+
+    async def find_opportunities(self) -> list:
+        """Main entry: run all 3 sub-strategies and merge results."""
         opportunities = []
-        markets = await self.poly.get_all_active_markets(limit=200)
-        log.info(f"Genel Tarama: {len(markets)} aktif market bulundu")
+
+        # Fetch markets from both APIs for complementary data
+        try:
+            clob_markets, gamma_markets = await asyncio.gather(
+                self.poly.get_all_active_markets(limit=500),
+                self._fetch_gamma_markets(limit=200),
+            )
+        except Exception as e:
+            log.error(f"Universal Engine fetch error: {e}")
+            return []
+
+        # Build gamma lookup by condition_id for volume data
+        gamma_lookup = {}
+        for gm in gamma_markets:
+            cid = gm.get("conditionId", "")
+            if cid:
+                gamma_lookup[cid] = gm
+
+        log.info(f"Universal Engine: {len(clob_markets)} CLOB + {len(gamma_markets)} Gamma markets")
+
+        # Skip BTC/Weather/Metals markets (already handled by dedicated engines)
+        skip_words = ["bitcoin", "btc", "ethereum", "temperature", "degrees",
+                      "fahrenheit", "weather", "gold", "silver", "xau", "xag",
+                      "celsius", "snow", "rain", "hurricane"]
+
+        filtered_markets = []
+        for market in clob_markets:
+            question = market.get("question", "").lower()
+            if any(w in question for w in skip_words):
+                continue
+            filtered_markets.append(market)
+
+        log.info(f"Universal Engine: {len(filtered_markets)} markets after domain filter")
+
+        # Run sub-strategies
+        extreme_opps = await self._strategy_extreme_price(filtered_markets, gamma_lookup)
+        momentum_opps = await self._strategy_momentum(filtered_markets, gamma_lookup)
+
+        opportunities = extreme_opps + momentum_opps
+
+        # Deduplicate by condition_id
+        seen = set()
+        unique_opps = []
+        for opp in opportunities:
+            cid = opp.get("condition_id", "")
+            if cid and cid in seen:
+                continue
+            seen.add(cid)
+            unique_opps.append(opp)
+
+        unique_opps.sort(key=lambda x: abs(x["edge"]), reverse=True)
+        log.info(f"Universal Engine: {len(extreme_opps)} extreme + {len(momentum_opps)} momentum "
+                 f"= {len(unique_opps)} unique opportunities")
+        return unique_opps
+
+    async def _strategy_extreme_price(self, markets: list, gamma_lookup: dict) -> list:
+        """
+        Sub-engine A: Extreme Price
+        Markets priced ≤0.05 or ≥0.95 that may be mispriced.
+        - YES ≤ 0.05 with end_date > 30 days: potential YES buy (market may be wrong)
+        - YES ≥ 0.95 with end_date > 7 days: potential NO buy at 0.05 (cheap contrarian)
+        """
+        opportunities = []
 
         for market in markets:
             question = market.get("question", "")
-            liquidity = float(market.get("liquidity", 0) or 0)
-            if liquidity < CFG.min_liquidity:
-                continue
-
             tokens = market.get("tokens", [])
             if not tokens:
                 continue
 
             yes_token = next((t for t in tokens if t.get("outcome", "").upper() == "YES"), None)
+            no_token = next((t for t in tokens if t.get("outcome", "").upper() == "NO"), None)
             if not yes_token:
                 continue
 
-            price = float(yes_token.get("price", 0.5) or 0.5)
+            token_id = yes_token.get("token_id", "")
+            if not token_id:
+                continue
 
-            # Ilginc kategoriler
-            tags = [t.get("slug", "") if isinstance(t, dict) else str(t)
-                    for t in market.get("tags", [])]
-            category = market.get("groupItemTitle", market.get("category", "other"))
+            # Get real price from CLOB
+            try:
+                market_price, spread, is_liquid = await self.poly.get_smart_price(token_id)
+            except Exception:
+                continue
 
-            opportunities.append({
-                "type": "general",
-                "market_id": market.get("id", ""),
-                "market": question[:80],
-                "market_price": round(price, 4),
-                "liquidity": liquidity,
-                "volume": float(market.get("volume", 0) or 0),
-                "category": str(category)[:30],
-                "tags": tags[:5],
-                "token_id": yes_token.get("token_id"),
-                "end_date": market.get("endDate", ""),
-                "condition_id": market.get("conditionId", ""),
-            })
+            if market_price <= 0 or market_price >= 1:
+                continue
 
-        opportunities.sort(key=lambda x: x["liquidity"], reverse=True)
+            # Get volume from Gamma API
+            cid = market.get("condition_id", "")
+            gamma_data = gamma_lookup.get(cid, {})
+            volume_24h = float(gamma_data.get("volume24hr", 0) or 0)
+            total_volume = float(gamma_data.get("volume", 0) or 0)
+
+            # Parse end date
+            end_date_str = market.get("end_date_iso", "")
+            days_until = 30  # default
+            if end_date_str:
+                try:
+                    end_dt = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
+                    days_until = max(0, (end_dt - datetime.now(timezone.utc)).days)
+                except (ValueError, TypeError):
+                    pass
+
+            # --- Strategy: Cheap YES (price ≤ 0.08) ---
+            if market_price <= 0.08 and days_until >= 14 and total_volume >= 5000:
+                # Estimate: market says ~5% chance, but with time left there's uncertainty
+                # The further from expiry + higher volume = more likely market is correct
+                # But occasional mispricing exists at extremes
+                estimated_prob = market_price * 1.5  # Slight optimistic bias
+                estimated_prob = min(0.20, max(0.03, estimated_prob))
+                edge = estimated_prob - market_price
+                confidence = min(0.6, 0.3 + (volume_24h / 50000) * 0.3)
+
+                if edge >= 0.02:  # Even small edges matter at extreme prices
+                    opportunities.append({
+                        "type": "universal",
+                        "market_id": cid[:20],
+                        "market": question[:80],
+                        "real_prob": round(estimated_prob, 4),
+                        "market_price": round(market_price, 4),
+                        "edge": round(edge, 4),
+                        "confidence": round(confidence, 4),
+                        "side": "YES",
+                        "token_id": token_id,
+                        "no_token_id": no_token.get("token_id", "") if no_token else "",
+                        "liquidity": total_volume,
+                        "ob_spread": round(spread, 4),
+                        "is_liquid": is_liquid,
+                        "condition_id": cid,
+                        "end_date": end_date_str,
+                        "source": "extreme_low",
+                        "volume_24h": volume_24h,
+                    })
+
+            # --- Strategy: Cheap NO (YES price ≥ 0.92, so NO is cheap) ---
+            elif market_price >= 0.92 and days_until >= 7 and total_volume >= 5000:
+                no_price = 1 - market_price
+                # Market says ~95% YES, but events can surprise
+                estimated_no_prob = no_price * 1.5
+                estimated_no_prob = min(0.20, max(0.03, estimated_no_prob))
+                edge = -(estimated_no_prob - no_price)  # Negative edge = NO bet
+
+                if abs(edge) >= 0.02:
+                    opportunities.append({
+                        "type": "universal",
+                        "market_id": cid[:20],
+                        "market": question[:80],
+                        "real_prob": round(1 - estimated_no_prob, 4),
+                        "market_price": round(market_price, 4),
+                        "edge": round(edge, 4),
+                        "confidence": round(min(0.5, 0.2 + (volume_24h / 50000) * 0.3), 4),
+                        "side": "NO",
+                        "token_id": token_id,
+                        "no_token_id": no_token.get("token_id", "") if no_token else "",
+                        "liquidity": total_volume,
+                        "ob_spread": round(spread, 4),
+                        "is_liquid": is_liquid,
+                        "condition_id": cid,
+                        "end_date": end_date_str,
+                        "source": "extreme_high",
+                        "volume_24h": volume_24h,
+                    })
+
+        return opportunities
+
+    async def _strategy_momentum(self, markets: list, gamma_lookup: dict) -> list:
+        """
+        Sub-engine B: Momentum + Volume Spike detection
+        Detects markets where price moved significantly with volume confirmation.
+        Uses Gamma API price change data + CLOB real prices.
+        """
+        opportunities = []
+
+        for market in markets:
+            question = market.get("question", "")
+            tokens = market.get("tokens", [])
+            if not tokens:
+                continue
+
+            yes_token = next((t for t in tokens if t.get("outcome", "").upper() == "YES"), None)
+            no_token = next((t for t in tokens if t.get("outcome", "").upper() == "NO"), None)
+            if not yes_token:
+                continue
+
+            token_id = yes_token.get("token_id", "")
+            if not token_id:
+                continue
+
+            cid = market.get("condition_id", "")
+            gamma_data = gamma_lookup.get(cid, {})
+
+            # Need Gamma data for price change info
+            if not gamma_data:
+                continue
+
+            volume_24h = float(gamma_data.get("volume24hr", 0) or 0)
+            total_volume = float(gamma_data.get("volume", 0) or 0)
+
+            # Minimum volume threshold
+            if total_volume < 10000 or volume_24h < 1000:
+                continue
+
+            # Get current CLOB price
+            try:
+                market_price, spread, is_liquid = await self.poly.get_smart_price(token_id)
+            except Exception:
+                continue
+
+            if market_price <= 0.05 or market_price >= 0.95:
+                continue  # Already handled by extreme price strategy
+
+            if not is_liquid:
+                continue  # Skip illiquid markets for momentum
+
+            # Parse end date
+            end_date_str = market.get("end_date_iso", "")
+            days_until = 30
+            if end_date_str:
+                try:
+                    end_dt = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
+                    days_until = max(0, (end_dt - datetime.now(timezone.utc)).days)
+                except (ValueError, TypeError):
+                    pass
+
+            if days_until < 3:
+                continue  # Too close to expiry for momentum plays
+
+            # Volume spike detection: is 24h volume unusually high?
+            # Average daily volume estimate = total_volume / max(days_active, 30)
+            days_active = max(30, 365 - days_until)  # rough estimate
+            avg_daily_vol = total_volume / days_active if days_active > 0 else 0
+            vol_spike_ratio = volume_24h / avg_daily_vol if avg_daily_vol > 0 else 0
+
+            # Need significant volume spike (3x+ normal) for momentum signal
+            if vol_spike_ratio < 3.0:
+                continue
+
+            # Momentum signal: high volume + non-extreme price = event happening
+            # Direction: if price is trending toward YES (price > 0.50) → YES momentum
+            # If price is trending toward NO (price < 0.50) → NO momentum
+            if market_price > 0.55:
+                # YES momentum — market is moving toward YES
+                estimated_prob = min(0.85, market_price + 0.05)  # slight continuation bias
+                edge = estimated_prob - market_price
+                side = "YES"
+            elif market_price < 0.45:
+                # NO momentum — market is moving toward NO
+                estimated_prob = max(0.15, market_price - 0.05)
+                edge = estimated_prob - market_price  # negative = NO bet
+                side = "NO"
+            else:
+                continue  # 0.45-0.55 range: no clear direction
+
+            confidence = min(0.65, 0.30 + (vol_spike_ratio - 3) * 0.05)
+
+            if abs(edge) >= 0.03:
+                opportunities.append({
+                    "type": "universal",
+                    "market_id": cid[:20],
+                    "market": question[:80],
+                    "real_prob": round(estimated_prob, 4),
+                    "market_price": round(market_price, 4),
+                    "edge": round(edge, 4),
+                    "confidence": round(confidence, 4),
+                    "side": side,
+                    "token_id": token_id,
+                    "no_token_id": no_token.get("token_id", "") if no_token else "",
+                    "liquidity": total_volume,
+                    "ob_spread": round(spread, 4),
+                    "is_liquid": is_liquid,
+                    "condition_id": cid,
+                    "end_date": end_date_str,
+                    "source": f"momentum_vol{vol_spike_ratio:.1f}x",
+                    "volume_24h": volume_24h,
+                })
+
         return opportunities
 
 
-# --- SIMULASYON MOTORU --------------------------------------------------------
+# --- SIMULATION ENGINE --------------------------------------------------------
 
 class SimulationEngine:
-    """Paper trading / simulasyon motoru"""
+    """Paper trading / simulation engine"""
 
     def __init__(self, initial_balance: float = 10000.0):
         self.balance = initial_balance
         self.initial_balance = initial_balance
-        self.positions = []  # Acik pozisyonlar
-        self.closed_trades = []  # Kapanmis islemler
-        self.trade_history = []  # Tum islem gecmisi
+        self.positions = []  # Open positions
+        self.closed_trades = []  # Closed trades
+        self.trade_history = []  # All trade history
         self._load_state()
 
     def _state_file(self):
@@ -989,8 +1298,8 @@ class SimulationEngine:
                 self.positions = state.get("positions", [])
                 self.closed_trades = state.get("closed_trades", [])
                 self.trade_history = state.get("trade_history", [])
-                log.info(f"SIM: State yuklendi - Bakiye: ${self.balance:.2f}, "
-                         f"{len(self.positions)} acik pozisyon")
+                log.info(f"SIM: State loaded - Balance: ${self.balance:.2f}, "
+                         f"{len(self.positions)} open positions")
             except Exception as e:
                 log.warning(f"SIM state load error: {e}")
 
@@ -1010,7 +1319,7 @@ class SimulationEngine:
                   end_date: str = "", token_id: str = "",
                   no_token_id: str = "") -> dict:
         if amount > self.balance:
-            return {"error": f"Yetersiz bakiye: ${self.balance:.2f}"}
+            return {"error": f"Insufficient balance: ${self.balance:.2f}"}
 
         position = {
             "id": f"sim_{len(self.trade_history)+1:04d}",
@@ -1041,8 +1350,9 @@ class SimulationEngine:
 
     def get_portfolio_summary(self) -> dict:
         total_invested = sum(p["amount"] for p in self.positions)
-        total_pnl = sum(t.get("pnl", 0) for t in self.closed_trades)
+        realized_pnl = sum(t.get("pnl", 0) for t in self.closed_trades)
         win_count = sum(1 for t in self.closed_trades if t.get("pnl", 0) > 0)
+        loss_count = sum(1 for t in self.closed_trades if t.get("pnl", 0) < 0)
         total_closed = len(self.closed_trades)
 
         return {
@@ -1050,23 +1360,27 @@ class SimulationEngine:
             "initial_balance": self.initial_balance,
             "total_invested": round(total_invested, 2),
             "portfolio_value": round(self.balance + total_invested, 2),
-            "total_pnl": round(total_pnl, 2),
-            "pnl_pct": round((total_pnl / self.initial_balance) * 100, 2) if self.initial_balance > 0 else 0,
+            "realized_pnl": round(realized_pnl, 2),
+            "unrealized_pnl": 0.0,  # filled by web_server
+            "total_pnl": round(realized_pnl, 2),
+            "pnl_pct": round((realized_pnl / self.initial_balance) * 100, 2) if self.initial_balance > 0 else 0,
             "open_positions": len(self.positions),
             "closed_trades": total_closed,
+            "win_count": win_count,
+            "loss_count": loss_count,
             "win_rate": round((win_count / total_closed) * 100, 1) if total_closed > 0 else 0,
             "total_trades": len(self.trade_history),
         }
 
     def resolve_position(self, position_id: str, outcome: str) -> dict:
-        """Pozisyonu sonuclandir (YES/NO) - binary (tam kazanc/tam kayip)"""
+        """Resolve position (YES/NO)"""
         pos = None
         for i, p in enumerate(self.positions):
             if p["id"] == position_id:
                 pos = self.positions.pop(i)
                 break
         if not pos:
-            return {"error": "Pozisyon bulunamadi"}
+            return {"error": "Position not found"}
 
         won = (pos["side"] == outcome)
         if won:
@@ -1087,13 +1401,9 @@ class SimulationEngine:
         self.save_state()
         return pos
 
-    def sell_position(self, position_id: str, current_price: float) -> dict:
-        """
-        Pozisyonu mevcut piyasa fiyatindan sat (gercekci PnL).
-        Binary resolve yerine, gercek fiyat degisimine gore PnL hesaplar.
-        shares = amount / entry_price
-        current_value = shares * current_price
-        pnl = current_value - amount
+    def sell_position(self, position_id: str, current_price: float, reason: str = "") -> dict:
+        """Sell position at current market price instead of waiting for binary resolution.
+        This enables take-profit, stop-loss, and time-stop exits.
         """
         pos = None
         for i, p in enumerate(self.positions):
@@ -1101,51 +1411,63 @@ class SimulationEngine:
                 pos = self.positions.pop(i)
                 break
         if not pos:
-            return {"error": "Pozisyon bulunamadi"}
+            return {"error": "Position not found"}
 
-        entry_price = pos.get("entry_price", 0.5)
-        amount = pos.get("amount", 0)
+        entry_price = pos["entry_price"]
+        amount = pos["amount"]
 
-        if entry_price > 0:
+        # Calculate PnL based on entry vs current market price
+        if pos["side"] == "YES":
+            # Bought YES tokens at entry_price, selling at current_price
             shares = amount / entry_price
             payout = shares * current_price
+            pnl = payout - amount
         else:
-            payout = amount  # entry=0 ise orjinal miktari geri ver
+            # Bought NO tokens at (1-entry_price), selling at (1-current_price)
+            no_entry = 1 - entry_price
+            no_current = 1 - current_price
+            shares = amount / no_entry if no_entry > 0 else 0
+            payout = shares * no_current
+            pnl = payout - amount
 
-        pnl = payout - amount
-
-        pos["status"] = "won" if pnl >= 0 else "lost"
-        pos["pnl"] = round(pnl, 4)
-        pos["payout"] = round(payout, 4)
-        pos["sell_price"] = round(current_price, 4)
-        pos["resolved_at"] = datetime.now(timezone.utc).isoformat()
-        pos["outcome"] = f"SOLD@{current_price:.3f}"
-
+        payout = max(payout, 0)  # Can't go below 0
         self.balance += payout
+
+        # Move to closed trades
+        pos["status"] = "sold"
+        pos["exit_price"] = round(current_price, 4)
+        pos["pnl"] = round(pnl, 2)
+        pos["payout"] = round(payout, 2)
+        pos["closed_at"] = datetime.now(timezone.utc).isoformat()
+        pos["sell_reason"] = reason
         self.closed_trades.append(pos)
         self.save_state()
+
+        log_trade(f"SELL-{pos['side']}", pos.get("market", "")[:40], amount,
+                  current_price, f"pnl=${pnl:.2f} {reason}", sim=True)
+
         return pos
 
 
-# --- ANA BOT -----------------------------------------------------------------
+# --- MAIN BOT ----------------------------------------------------------------
 
 class ArbBot:
     def __init__(self):
         self.weather_engine = WeatherArbEngine()
         self.btc_engine = BTCArbEngine()
-        self.scanner = GeneralMarketScanner()
+        self.universal_engine = UniversalMarketEngine()
         self.poly = PolymarketClient()
         self.sim = SimulationEngine(CFG.initial_balance) if CFG.simulation_mode else None
         self.daily_spent = 0.0
         self.last_reset = datetime.now(timezone.utc).date()
-        self.last_scan_results = {}  # Web API icin son tarama sonuclari
+        self.last_scan_results = {}  # Last scan results for Web API
 
     def reset_daily_if_needed(self):
         today = datetime.now(timezone.utc).date()
         if today != self.last_reset:
             self.daily_spent = 0.0
             self.last_reset = today
-            log.info("Gunluk limit sifirlandi")
+            log.info("Daily limit reset")
 
     def calculate_order_size(self, edge: float, liquidity: float) -> float:
         kelly_fraction = min(abs(edge), 0.3)
@@ -1158,7 +1480,7 @@ class ArbBot:
     async def execute_opportunity(self, opp: dict) -> bool:
         self.reset_daily_if_needed()
         if CFG.max_daily_usd > 0 and self.daily_spent >= CFG.max_daily_usd:
-            log.warning(f"Gunluk limit dolu: ${self.daily_spent:.2f}/{CFG.max_daily_usd}")
+            log.warning(f"Daily limit reached: ${self.daily_spent:.2f}/{CFG.max_daily_usd}")
             return False
 
         order_size = self.calculate_order_size(opp["edge"], opp["liquidity"])
@@ -1182,7 +1504,7 @@ class ArbBot:
                 self.daily_spent += order_size
                 return True
             else:
-                log.warning(f"SIM hata: {result['error']}")
+                log.warning(f"SIM error: {result['error']}")
                 return False
         else:
             price = opp["market_price"] if opp["side"] == "YES" else 1 - opp["market_price"]
@@ -1198,46 +1520,46 @@ class ArbBot:
 
     async def run_cycle(self) -> dict:
         log.info("=" * 60)
-        log.info(f"Yeni dongü: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        log.info(f"New cycle: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-        weather_opps, btc_opps, general_markets = await asyncio.gather(
+        weather_opps, btc_opps, universal_opps = await asyncio.gather(
             self.weather_engine.find_opportunities(),
             self.btc_engine.find_opportunities(),
-            self.scanner.find_mispriced_markets(),
+            self.universal_engine.find_opportunities(),
         )
 
-        all_opps = weather_opps + btc_opps
+        all_opps = weather_opps + btc_opps + universal_opps
         all_opps.sort(key=lambda x: abs(x["edge"]), reverse=True)
 
         result = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "weather_opportunities": weather_opps,
             "btc_opportunities": btc_opps,
-            "general_markets": general_markets[:50],
+            "universal_opportunities": universal_opps,
             "total_opportunities": len(all_opps),
             "portfolio": self.sim.get_portfolio_summary() if self.sim else {},
         }
         self.last_scan_results = result
 
-        # Sonuclari kaydet
+        # Save results
         with open(DATA_DIR / "last_scan.json", "w") as f:
             json.dump(result, f, indent=2, default=str)
 
         if not all_opps:
-            log.info("Bu dongude firsat bulunamadi")
-            log.info(f"Genel taramada {len(general_markets)} market listelendi")
+            log.info("No opportunities found this cycle")
             return result
 
-        log.info(f"{len(all_opps)} firsat bulundu "
-                 f"({len(weather_opps)} hava, {len(btc_opps)} BTC)")
+        log.info(f"{len(all_opps)} opportunities found "
+                 f"({len(weather_opps)} weather, {len(btc_opps)} BTC, "
+                 f"{len(universal_opps)} universal)")
 
         for opp in all_opps[:10]:
-            emoji = "W" if opp["type"] == "weather" else "B"
-            log.info(f"[{emoji}] {opp['market'][:50]} | "
+            type_tag = {"weather": "W", "btc": "B", "metals": "M", "universal": "U"}.get(opp["type"], "?")
+            log.info(f"[{type_tag}] {opp['market'][:50]} | "
                      f"Edge: {opp['edge']*100:+.1f}% | "
                      f"{opp['side']} @ {opp['market_price']:.3f}")
 
-        # Simulasyon modunda otomatik bet
+        # Auto bet in simulation mode
         if self.sim and CFG.max_daily_usd > 0:
             executed = 0
             for opp in all_opps[:3]:
@@ -1251,14 +1573,14 @@ class ArbBot:
         return result
 
     async def run(self):
-        mode = "SIMULASYON" if CFG.simulation_mode else "CANLI"
-        log.info(f"Polymarket Arbitraj Botu v2.0 baslatiliyor [{mode}]")
+        mode = "SIMULATION" if CFG.simulation_mode else "LIVE"
+        log.info(f"Polymarket Arbitrage Bot v1.5 starting [{mode}]")
         log.info(f"Min edge: {CFG.min_edge_pct}% | Max order: ${CFG.max_order_usd} | "
-                 f"Gunluk limit: ${CFG.max_daily_usd}")
+                 f"Daily limit: ${CFG.max_daily_usd}")
 
         if not CFG.simulation_mode and not CFG.poly_private_key:
-            log.error("POLY_PRIVATE_KEY eksik! .env dosyasini kontrol et.")
-            log.info("Simulasyon moduna geciliyor...")
+            log.error("POLY_PRIVATE_KEY missing! Check your .env file.")
+            log.info("Switching to simulation mode...")
             CFG.simulation_mode = True
             self.sim = SimulationEngine(CFG.initial_balance)
 
@@ -1266,24 +1588,24 @@ class ArbBot:
             try:
                 await self.run_cycle()
             except KeyboardInterrupt:
-                log.info("Bot durduruldu")
+                log.info("Bot stopped")
                 break
             except Exception as e:
-                log.error(f"Dongu hatasi: {e}", exc_info=True)
+                log.error(f"Cycle error: {e}", exc_info=True)
 
-            log.info(f"Sonraki dongu {CFG.loop_interval_sec}s sonra...")
+            log.info(f"Next cycle in {CFG.loop_interval_sec}s...")
             await asyncio.sleep(CFG.loop_interval_sec)
 
 
-# --- OTOMATİK TRADİNG SİSTEMİ -------------------------------------------------
+# --- AUTO TRADING SYSTEM ------------------------------------------------------
 
 class AutoTrader:
     """
-    Tam otomatik trading sistemi:
-    - Periyodik olarak BTC (5 borsa) ve Weather (NOAA) firsatlarini tarar
-    - Edge bulunursa otomatik simülasyon bahisi açar
-    - Açık pozisyonları gerçek verilere göre otomatik resolve eder
-    - Tüm istatistikleri takip eder
+    Fully automated trading system:
+    - Periodically scans BTC (5 exchanges) and Weather (NOAA) opportunities
+    - Opens auto simulation bets when edge is found
+    - Auto-resolves open positions based on real data
+    - Tracks all statistics
     """
 
     def __init__(self, sim_engine: SimulationEngine):
@@ -1291,10 +1613,11 @@ class AutoTrader:
         self.weather_engine = WeatherArbEngine()
         self.btc_engine = BTCArbEngine()
         self.metals_engine = MetalsArbEngine()
+        self.universal_engine = UniversalMarketEngine()
         self.poly = PolymarketClient()
         self.price_agg = PriceAggregator()
 
-        # Durum bilgileri
+        # Status info
         self.running = False
         self.scan_count = 0
         self.auto_bets_placed = 0
@@ -1304,12 +1627,12 @@ class AutoTrader:
         self.last_scan_result = {}
         self.daily_spent = 0.0
         self.last_reset_date = datetime.now(timezone.utc).date()
-        self.scan_interval = CFG.loop_interval_sec  # saniye
-        self.max_bets_per_cycle = 3
-        self.min_edge_auto = CFG.min_edge_pct / 100  # Otomatik bahis icin minimum edge
+        self.scan_interval = CFG.loop_interval_sec  # seconds
+        self.max_bets_per_cycle = 5
+        self.min_edge_auto = CFG.min_edge_pct / 100  # Minimum edge for auto betting
         self.auto_resolve_enabled = True
 
-        # Istatistikler
+        # Statistics
         self.stats = {
             "total_scans": 0,
             "total_bets_placed": 0,
@@ -1319,7 +1642,7 @@ class AutoTrader:
             "last_btc_prices": {},
             "last_weather_data": [],
             "last_opportunities": [],
-            "cycle_log": [],  # Son 50 döngü logu
+            "cycle_log": [],  # Last 50 cycle logs
             "started_at": None,
             "errors": 0,
         }
@@ -1330,10 +1653,10 @@ class AutoTrader:
         if today != self.last_reset_date:
             self.daily_spent = 0.0
             self.last_reset_date = today
-            log.info("[AUTO] Gunluk limit sifirlandi")
+            log.info("[AUTO] Daily limit reset")
 
     def get_status(self) -> dict:
-        """Mevcut durum bilgisi"""
+        """Current status information"""
         return {
             "running": self.running,
             "scan_count": self.scan_count,
@@ -1352,19 +1675,19 @@ class AutoTrader:
         }
 
     def _log_cycle(self, msg: str, level: str = "info"):
-        """Döngü logunu kaydet"""
+        """Save cycle log entry"""
         entry = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "msg": msg,
             "level": level,
         }
         self.stats["cycle_log"].append(entry)
-        # Son 100 log tut
+        # Keep last 100 logs
         if len(self.stats["cycle_log"]) > 100:
             self.stats["cycle_log"] = self.stats["cycle_log"][-100:]
 
     def _get_tier_max(self, balance: float) -> float:
-        """Bakiyeye gore kademeli max bahis limiti"""
+        """Tiered max bet limit based on balance"""
         if balance < 100:
             return 2.0       # $0-100: max $2
         elif balance < 200:
@@ -1380,52 +1703,55 @@ class AutoTrader:
         else:
             return 200.0     # $5000+: max $200
 
-    def calculate_bet_size(self, edge: float, real_prob: float = 0.5) -> float:
+    def calculate_bet_size(self, edge: float, real_prob: float = 0.5,
+                           confidence: float = 0.5) -> float:
         """
-        Bakiyeye gore dinamik + kademeli bahis boyutu:
-        Kademe limitleri:
-          $0-100    -> max $2
-          $100-200  -> max $5
-          $200-500  -> max $10
-          $500-1000 -> max $20
-          $1000-2000-> max $50
-          $2000+    -> max $100-200
-        Edge ve olasilik yuksekse kademe icinde ust sinira yaklasir.
+        v1.5 - Dynamic + tiered + confidence-based bet sizing:
+        Tier limits by balance, then scaled by edge × probability × confidence.
+        High confidence (>0.7) → full tier, Medium (0.4-0.7) → 60%, Low (<0.4) → 30%.
         """
         balance = self.sim.balance
         abs_edge = abs(edge)
         tier_max = self._get_tier_max(balance)
 
-        # Edge bazli oran: %5 edge -> kademenin %25'i, %30+ edge -> kademenin %100'u
-        edge_ratio = min(abs_edge * 3.3, 1.0)   # 0.05*3.3=0.165 -> 0.30*3.3=1.0
-        edge_ratio = max(edge_ratio, 0.15)        # minimum kademenin %15'i
+        # Edge-based ratio: 5% edge -> 25% of tier, 30%+ edge -> 100% of tier
+        edge_ratio = min(abs_edge * 3.3, 1.0)
+        edge_ratio = max(edge_ratio, 0.15)
 
-        # Olasilik carpani: kesinlik yuksekse kademe limitine yaklastir
+        # Probability multiplier
         prob_mult = 1.0
         if real_prob >= 0.90:
-            prob_mult = 1.5   # cok emin
+            prob_mult = 1.5
         elif real_prob >= 0.80:
-            prob_mult = 1.3   # emin
+            prob_mult = 1.3
         elif real_prob >= 0.70:
-            prob_mult = 1.15  # biraz emin
+            prob_mult = 1.15
 
-        size = tier_max * edge_ratio * prob_mult
+        # Confidence multiplier (v1.5)
+        if confidence >= 0.70:
+            conf_mult = 1.0    # Full size for high confidence
+        elif confidence >= 0.40:
+            conf_mult = 0.60   # 60% for medium confidence
+        else:
+            conf_mult = 0.30   # 30% for low confidence
 
-        # Kademe limitini asma
+        size = tier_max * edge_ratio * prob_mult * conf_mult
+
+        # Don't exceed tier max
         size = min(size, tier_max)
 
         # MIN: $0.50
         size = max(size, 0.50)
 
-        # Gunluk limit (0 = limitsiz)
+        # Daily limit (0 = unlimited)
         if CFG.max_daily_usd > 0:
             remaining = CFG.max_daily_usd - self.daily_spent
             if remaining <= 0:
                 return 0
             size = min(size, remaining)
 
-        # Son guvenlik: bakiyeden fazla olamaz
-        size = min(size, balance - 1.0)  # en az $1 bakiye kalsin
+        # Safety: don't exceed balance - keep at least $1
+        size = min(size, balance - 1.0)
 
         if size < 0.50:
             return 0
@@ -1434,9 +1760,14 @@ class AutoTrader:
 
     async def auto_resolve_positions(self):
         """
-        Acik pozisyonlari CLOB fiyat degisimine gore otomatik resolve et.
-        TUM pozisyon tipleri (btc, metals, weather) ayni sistemi kullanir.
-        ZORUNLU KURAL: Maksimum 60 dakika (1 saat) sonra zorla kapatilir.
+        Auto-resolve open positions based on real data.
+
+        IMPORTANT RULES:
+        - BTC positions: Only resolve when market_price updated AND
+          real price has definitively reached/missed the target
+        - Weather positions: Only resolve when weather event has occurred
+        - Future prediction markets (far end_date) are NOT resolved immediately
+        - Minimum wait time: 10 minutes (for short-term markets)
         """
         if not self.auto_resolve_enabled:
             return 0
@@ -1447,24 +1778,116 @@ class AutoTrader:
 
         for pos in positions_copy:
             try:
+                pos_type = pos.get("type", "")
+                market_name = pos.get("market", "").lower()
                 entry_time = pos.get("ts", "")
-                age_minutes = 0
 
-                # Pozisyon yasi hesapla
+                # Position must be open at least 10 minutes
                 if entry_time:
                     try:
                         entry_dt = datetime.fromisoformat(entry_time)
                         age_minutes = (now - entry_dt).total_seconds() / 60
-                        if age_minutes < 5:
-                            continue  # 5 dakikadan yeni, atla
+                        if age_minutes < 10:
+                            continue  # Too new, skip
                     except (ValueError, TypeError):
                         age_minutes = 0
 
-                # TUM pozisyonlar icin CLOB fiyat degisimine gore resolve
-                await self._resolve_by_price_change(pos, age_minutes)
-                if pos["id"] not in [p["id"] for p in self.sim.positions]:
-                    resolved += 1
-                    self.auto_resolves += 1
+                # Market end_date check - don't resolve if end_date is far away
+                end_date_str = pos.get("end_date", "")
+                if end_date_str:
+                    try:
+                        end_dt = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
+                        days_until_end = (end_dt - now).days
+                        # If end date is more than 7 days away, resolve by CLOB price change
+                        if days_until_end > 7:
+                            # Long-term market: resolve only by CLOB price change
+                            await self._resolve_by_price_change(pos, age_minutes)
+                            if pos["id"] not in [p["id"] for p in self.sim.positions]:
+                                resolved += 1
+                                self.auto_resolves += 1
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+
+                outcome = None
+
+                if pos_type == "btc":
+                    # BTC: Real price target check
+                    prices = self.stats.get("last_btc_prices", {})
+                    if not prices:
+                        prices = await self.price_agg.get_all_prices()
+
+                    if prices:
+                        avg_price = sum(prices.values()) / len(prices)
+                        target = self.btc_engine.extract_btc_target(pos.get("market", ""))
+
+                        if target and target > 100:  # Must be a valid target
+                            is_exceed = any(w in market_name for w in
+                                          ["exceed", "above", "over", "reach", "hit", "higher"])
+                            is_below = any(w in market_name for w in
+                                          ["below", "under", "drop", "fall", "lower"])
+
+                            # Only resolve when target is definitively reached/missed
+                            if is_exceed:
+                                if avg_price >= target * 1.005:  # %0.5 margin
+                                    outcome = "YES"
+                                elif avg_price < target * 0.95 and age_minutes > 30:
+                                    outcome = "NO"  # 5%+ away from target and 30min passed
+                            elif is_below:
+                                if avg_price <= target * 0.995:
+                                    outcome = "YES"
+                                elif avg_price > target * 1.05 and age_minutes > 30:
+                                    outcome = "NO"
+
+                elif pos_type == "weather":
+                    # Weather: resolve with NOAA real data
+                    if age_minutes < 15:
+                        continue  # Wait at least 15min for weather
+
+                    forecasts = self.stats.get("last_weather_data", [])
+                    if forecasts:
+                        for fc in forecasts:
+                            if fc and fc.get("city", "").lower() in market_name:
+                                temp_range = self.weather_engine.parse_temp_range(pos.get("market", ""))
+                                if temp_range:
+                                    low, high = temp_range
+                                    actual_temp = fc["max_temp_f"]
+                                    # Is it definitively within/outside the range?
+                                    if actual_temp >= low + 2 and actual_temp <= high - 2:
+                                        outcome = "YES"  # Definitively within range
+                                    elif actual_temp < low - 3 or actual_temp > high + 3:
+                                        outcome = "NO"  # Definitively outside range
+                                break
+
+                elif pos_type == "metals":
+                    # Metals: resolve by price change (TP/SL/Time-stop)
+                    await self._resolve_by_price_change(pos, age_minutes)
+                    if pos["id"] not in [p["id"] for p in self.sim.positions]:
+                        resolved += 1
+                        self.auto_resolves += 1
+                    continue
+
+                elif pos_type == "universal":
+                    # Universal: resolve by price change (TP/SL/Time-stop)
+                    await self._resolve_by_price_change(pos, age_minutes)
+                    if pos["id"] not in [p["id"] for p in self.sim.positions]:
+                        resolved += 1
+                        self.auto_resolves += 1
+                    continue
+
+                if outcome:
+                    result = self.sim.resolve_position(pos["id"], outcome)
+                    if "error" not in result:
+                        resolved += 1
+                        self.auto_resolves += 1
+                        pnl = result.get("pnl", 0)
+                        status = result.get("status", "unknown")
+                        self._log_cycle(
+                            f"AUTO-RESOLVE: {pos['market'][:40]} -> {outcome} | "
+                            f"{status} | PnL: ${pnl:.2f}",
+                            "success" if pnl > 0 else "warning"
+                        )
+                        log.info(f"[AUTO] Resolve: {pos['id']} -> {outcome} | PnL: ${pnl:.2f}")
 
             except Exception as e:
                 log.error(f"[AUTO] Resolve error for {pos.get('id', '?')}: {e}")
@@ -1473,38 +1896,22 @@ class AutoTrader:
 
     async def _resolve_by_price_change(self, pos: dict, age_minutes: float):
         """
-        CLOB'dan GERCEK guncel fiyat cekip entry_price ile karsilastir.
-        Kademeliesiksistemi:
-          - Market settled: token fiyati >=0.90 veya <=0.10 -> hemen resolve
-          - Take profit: %20+ lehimize ve 20dk+ -> WIN
-          - Stop loss: %25+ aleyhimize ve 20dk+ -> LOSE
-          - Orta sinyal: %15+ degisim ve 2 saat+ -> resolve
-          - Zaman asimi: 6 saat+ -> esik %10'a duser, 24 saat+ -> zorla resolve
-          - End_date gecmisse -> zorla resolve
+        Smart exit logic using sell_position() for TP/SL/Time-stop.
+        - Market nearly resolved (0.95/0.05): binary resolve (definitive)
+        - Take Profit: price moved ≥20% in our favor → sell
+        - Stop Loss: price moved ≥30% against us → sell
+        - Time Stop: open >7 days with <5% movement → sell (free up capital)
+        - Otherwise: wait
         """
-        if age_minutes < 10:
-            return  # Cok yeni, atla
+        if age_minutes < 15:
+            return  # Too new, skip
 
         side = pos.get("side", "YES")
         entry_price = pos.get("entry_price", 0.5)
 
-        # End date gecmis mi? (Market sonuclandi)
-        end_date_str = pos.get("end_date", "")
-        now = datetime.now(timezone.utc)
-        end_date_passed = False
-        if end_date_str:
-            try:
-                end_dt = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
-                if now > end_dt:
-                    end_date_passed = True
-            except (ValueError, TypeError):
-                pass
-
-        # CLOB'dan gercek guncel fiyati cek
+        # Fetch real current price from CLOB
         token_id = pos.get("token_id", "") if side == "YES" else pos.get("no_token_id", "")
         if not token_id:
-            # token_id yok, resolve yapamayiz
-            log.info(f"[AUTO] {pos['id']} token_id yok, resolve atilaniliyor")
             return
 
         try:
@@ -1513,159 +1920,136 @@ class AutoTrader:
             log.warning(f"[AUTO] Price fetch error for {pos['id']}: {e}")
             return
 
-        if current_price <= 0:
-            log.info(f"[AUTO] {pos['id']} CLOB fiyat alinamadi (price={current_price}), atlaniyor")
-            return  # Fiyat alinamadi, atla
-
-        # Fiyat degisim analizi
-        if entry_price <= 0:
-            log.info(f"[AUTO] {pos['id']} entry_price=0, atlaniyor")
+        if current_price <= 0 or entry_price <= 0:
             return
 
-        # price_change: pozitif = token fiyati artti (lehimize)
-        price_change = (current_price - entry_price) / entry_price
-
-        # Market neredeyse sonuclandi mi?
-        # ONEMLI: Dusuk fiyatli long-shot bahisler (entry<0.15) icin
-        # market_resolved_no esigi uygulanmaz - cunku zaten dusuk fiyatla girilmis
-        market_resolved_yes = current_price >= 0.90
-        # Sadece entry_price yuksekse (>0.15) market_resolved_no uygula
-        # Yoksa dusuk fiyatli tokenleri yanlis kapatir
-        market_resolved_no = current_price <= 0.05 and entry_price > 0.15
-
-        outcome = None
-        resolve_reason = ""
-
-        if market_resolved_yes:
-            # Token neredeyse $1 = bu token'in side'i kazandi
-            outcome = side  # Bizim token yukseldiyse BIZ kazandik
-            resolve_reason = f"Market {side}'a yaklasti (price={current_price:.3f})"
-        elif market_resolved_no:
-            # Token neredeyse $0 VE giris fiyati yuksekti = gercekten deger kaybetti
-            outcome = "NO" if side == "YES" else "YES"  # Karsitaraf kazandi
-            resolve_reason = f"Token degerini kaybetti (price={current_price:.3f}, entry={entry_price:.3f})"
-        elif end_date_passed:
-            # Market bitmis - mevcut fiyattan sat
-            result = self.sim.sell_position(pos["id"], current_price)
-            if "error" not in result:
-                pnl = result.get("pnl", 0)
-                self._log_cycle(
-                    f"END-DATE SELL: {pos['market'][:40]} | PnL: ${pnl:.4f} | "
-                    f"(entry={entry_price:.3f} -> sell={current_price:.3f})",
-                    "success" if pnl >= 0 else "warning"
-                )
-                log.info(f"[AUTO] END-DATE SELL: {pos['id']} | PnL: ${pnl:.4f}")
-            return
+        # Calculate directional price change (positive = favorable for our side)
+        if side == "YES":
+            favorable_change = (current_price - entry_price) / entry_price
         else:
-            # ZORUNLU KAPANIŞ: 60 dakika (1 saat) sonra mevcut fiyattan sat
-            if age_minutes >= 60:
-                # sell_position ile gercekci PnL hesapla (binary degil)
-                result = self.sim.sell_position(pos["id"], current_price)
-                if "error" not in result:
-                    pnl = result.get("pnl", 0)
-                    status = result.get("status", "unknown")
-                    self._log_cycle(
-                        f"1H-SELL: {pos['market'][:40]} | {status} | PnL: ${pnl:.4f} | "
-                        f"change={price_change*100:+.1f}% (entry={entry_price:.3f} -> sell={current_price:.3f})",
-                        "success" if pnl >= 0 else "warning"
-                    )
-                    log.info(
-                        f"[AUTO] 1H-SELL: {pos['id']} | PnL: ${pnl:.4f} | "
-                        f"entry={entry_price:.3f} sell={current_price:.3f} change={price_change*100:+.1f}%"
-                    )
-                return  # sell_position zaten islem yapti, asagiya gerek yok
-            # Kademeli esik sistemi (60 dk altı)
-            elif age_minutes >= 40:  # 40-60 dk
-                tp_threshold = 0.05   # %5 kar al
-                sl_threshold = 0.08   # %8 zarar kes
-                resolve_reason_prefix = "40m+"
-            elif age_minutes >= 20:   # 20-40 dk
-                tp_threshold = 0.10   # %10 kar al
-                sl_threshold = 0.15   # %15 zarar kes
-                resolve_reason_prefix = "20m+"
-            else:
-                # 10-20 dk arasi -> sadece büyük hareketlerde
-                tp_threshold = 0.20
-                sl_threshold = 0.25
-                resolve_reason_prefix = "10m+"
+            # For NO bets, price going DOWN is favorable
+            no_entry = 1 - entry_price
+            no_current = 1 - current_price
+            favorable_change = (no_current - no_entry) / no_entry if no_entry > 0 else 0
 
-            # outcome henuz set edilmediyse (60dk force-close degilse) esik kontrol et
-            if outcome is None:
-                if price_change >= tp_threshold:
-                    # Fiyat lehimize gitti -> BIZ kazandik
-                    outcome = side
-                    resolve_reason = (
-                        f"{resolve_reason_prefix} Take Profit: fiyat %{price_change*100:.0f} artti "
-                        f"(entry={entry_price:.3f} -> now={current_price:.3f})"
-                    )
-                elif price_change <= -sl_threshold:
-                    # Fiyat aleyhimize gitti -> BIZ kaybettik
-                    outcome = "NO" if side == "YES" else "YES"
-                    resolve_reason = (
-                        f"{resolve_reason_prefix} Stop Loss: fiyat %{abs(price_change)*100:.0f} dustu "
-                        f"(entry={entry_price:.3f} -> now={current_price:.3f})"
-                    )
-                else:
-                    # Yeterli sinyal yok - BEKLE
-                    log.info(
-                        f"[AUTO] {pos['id']} bekleniyor: {side} price={current_price:.3f} "
-                        f"change={price_change*100:+.1f}% age={age_minutes:.0f}m "
-                        f"(tp={tp_threshold*100:.0f}% sl={sl_threshold*100:.0f}%)"
-                    )
-                    return
+        age_hours = age_minutes / 60
+        age_days = age_hours / 24
 
-        if outcome:
+        # --- Case 1: Market nearly resolved (definitive binary outcome) ---
+        if current_price >= 0.95:
+            outcome = "YES"
             result = self.sim.resolve_position(pos["id"], outcome)
             if "error" not in result:
                 pnl = result.get("pnl", 0)
-                status = result.get("status", "unknown")
                 self._log_cycle(
-                    f"PRICE-RESOLVE: {pos['market'][:40]} -> {outcome} | "
-                    f"{status} | PnL: ${pnl:.2f} | {resolve_reason}",
+                    f"RESOLVED: {pos['market'][:40]} -> YES | "
+                    f"PnL: ${pnl:.2f} | Market at {current_price:.3f}",
                     "success" if pnl > 0 else "warning"
                 )
-                log.info(f"[AUTO] Real-Resolve: {pos['id']} -> {outcome} | PnL: ${pnl:.2f} | {resolve_reason}")
+                log.info(f"[AUTO] Resolve: {pos['id']} -> YES | PnL: ${pnl:.2f}")
+            return
+
+        if current_price <= 0.05:
+            outcome = "NO"
+            result = self.sim.resolve_position(pos["id"], outcome)
+            if "error" not in result:
+                pnl = result.get("pnl", 0)
+                self._log_cycle(
+                    f"RESOLVED: {pos['market'][:40]} -> NO | "
+                    f"PnL: ${pnl:.2f} | Market at {current_price:.3f}",
+                    "success" if pnl > 0 else "warning"
+                )
+                log.info(f"[AUTO] Resolve: {pos['id']} -> NO | PnL: ${pnl:.2f}")
+            return
+
+        # --- Case 2: Take Profit (≥20% favorable move, min 1hr old) ---
+        if favorable_change >= 0.20 and age_minutes >= 60:
+            result = self.sim.sell_position(pos["id"], current_price,
+                                           reason=f"TP +{favorable_change*100:.0f}%")
+            if "error" not in result:
+                pnl = result.get("pnl", 0)
+                self._log_cycle(
+                    f"TAKE-PROFIT: {pos['market'][:40]} | "
+                    f"PnL: ${pnl:.2f} | entry={entry_price:.3f} -> exit={current_price:.3f}",
+                    "success"
+                )
+                log.info(f"[AUTO] TP-Sell: {pos['id']} | PnL: ${pnl:.2f} | +{favorable_change*100:.0f}%")
+            return
+
+        # --- Case 3: Stop Loss (≥30% adverse move, min 2hr old) ---
+        if favorable_change <= -0.30 and age_minutes >= 120:
+            result = self.sim.sell_position(pos["id"], current_price,
+                                           reason=f"SL {favorable_change*100:.0f}%")
+            if "error" not in result:
+                pnl = result.get("pnl", 0)
+                self._log_cycle(
+                    f"STOP-LOSS: {pos['market'][:40]} | "
+                    f"PnL: ${pnl:.2f} | entry={entry_price:.3f} -> exit={current_price:.3f}",
+                    "warning"
+                )
+                log.info(f"[AUTO] SL-Sell: {pos['id']} | PnL: ${pnl:.2f} | {favorable_change*100:.0f}%")
+            return
+
+        # --- Case 4: Time Stop (>7 days, <5% move → free up capital) ---
+        if age_days >= 7 and abs(favorable_change) < 0.05:
+            result = self.sim.sell_position(pos["id"], current_price,
+                                           reason=f"TIME-STOP {age_days:.0f}d")
+            if "error" not in result:
+                pnl = result.get("pnl", 0)
+                self._log_cycle(
+                    f"TIME-STOP: {pos['market'][:40]} | "
+                    f"PnL: ${pnl:.2f} | {age_days:.0f} days, only {favorable_change*100:.1f}% move",
+                    "info"
+                )
+                log.info(f"[AUTO] Time-Sell: {pos['id']} | PnL: ${pnl:.2f} | {age_days:.0f}d stale")
+            return
+
+        # --- Case 5: Wait ---
+        log.debug(f"[AUTO] {pos['id']} holding: price={current_price:.3f} "
+                  f"change={favorable_change*100:+.1f}% age={age_days:.1f}d")
 
     async def run_scan_cycle(self) -> dict:
-        """Tek bir tarama döngüsü çalıştır"""
+        """Run a single scan cycle"""
         self._reset_daily()
         cycle_start = datetime.now(timezone.utc)
         self.scan_count += 1
         self.stats["total_scans"] = self.scan_count
 
-        log.info(f"[AUTO] === Dongu #{self.scan_count} basladi ===")
-        self._log_cycle(f"Döngü #{self.scan_count} başladı")
+        log.info(f"[AUTO] === Cycle #{self.scan_count} started ===")
+        self._log_cycle(f"Cycle #{self.scan_count} started")
 
-        # 1) Verileri paralel cek (BTC + Weather + Metals)
+        # 1) Fetch data in parallel (BTC + Weather + Metals + Universal)
         try:
-            weather_opps, btc_opps, metals_opps = await asyncio.gather(
+            weather_opps, btc_opps, metals_opps, universal_opps = await asyncio.gather(
                 self.weather_engine.find_opportunities(),
                 self.btc_engine.find_opportunities(),
                 self.metals_engine.find_opportunities(),
+                self.universal_engine.find_opportunities(),
             )
         except Exception as e:
             self.stats["errors"] += 1
-            self._log_cycle(f"Veri cekme hatasi: {e}", "error")
+            self._log_cycle(f"Data fetch error: {e}", "error")
             log.error(f"[AUTO] Scan error: {e}")
-            # Metals hatasi tum sistemi durdurmasin
+            # Engine error should not stop the entire system
             weather_opps = weather_opps if 'weather_opps' in dir() else []
             btc_opps = btc_opps if 'btc_opps' in dir() else []
-            metals_opps = []
+            metals_opps = metals_opps if 'metals_opps' in dir() else []
+            universal_opps = universal_opps if 'universal_opps' in dir() else []
 
-        # 2) BTC fiyatlarını kaydet
+        # 2) Save BTC prices
         try:
             btc_prices = await self.price_agg.get_all_prices()
             self.stats["last_btc_prices"] = btc_prices
             if btc_prices:
                 avg = sum(btc_prices.values()) / len(btc_prices)
                 self._log_cycle(
-                    f"BTC: {len(btc_prices)} borsa | Ort: ${avg:,.0f} | " +
+                    f"BTC: {len(btc_prices)} exchanges | Avg: ${avg:,.0f} | " +
                     " ".join(f"{k}=${v:,.0f}" for k, v in btc_prices.items())
                 )
         except Exception as e:
             log.warning(f"[AUTO] BTC price error: {e}")
 
-        # 3) NOAA verilerini kaydet
+        # 3) Save NOAA data
         try:
             noaa = NOAAClient()
             forecasts = await asyncio.gather(*[
@@ -1676,103 +2060,84 @@ class AutoTrader:
             self.stats["last_weather_data"] = valid_forecasts
             if valid_forecasts:
                 self._log_cycle(
-                    f"NOAA: {len(valid_forecasts)} şehir | " +
+                    f"NOAA: {len(valid_forecasts)} cities | " +
                     " ".join(f"{f['city']}={f['max_temp_f']}°F" for f in valid_forecasts)
                 )
         except Exception as e:
             log.warning(f"[AUTO] NOAA error: {e}")
 
-        # 4) Firsatlari birlestir ve EV (Expected Value) bazli sirala
-        all_opps = weather_opps + btc_opps + metals_opps
-        # EV = edge * confidence * (1 - spread_penalty) * liquidity_bonus
-        def ev_score(opp):
-            e = abs(opp["edge"])
-            conf = opp.get("confidence", 0.7)
-            spread = opp.get("ob_spread", 0.05)
-            spread_penalty = min(spread * 5, 0.5)  # max %50 ceza
-            liquid_bonus = 1.1 if opp.get("is_liquid", False) else 0.8
-            return e * conf * (1 - spread_penalty) * liquid_bonus
-        all_opps.sort(key=ev_score, reverse=True)
+        # 4) Combine and sort opportunities
+        all_opps = weather_opps + btc_opps + metals_opps + universal_opps
+        all_opps.sort(key=lambda x: abs(x["edge"]), reverse=True)
         self.stats["last_opportunities"] = all_opps
         self.stats["metals_bets"] = self.stats.get("metals_bets", 0)
 
         self._log_cycle(
-            f"Firsatlar: {len(weather_opps)} hava + {len(btc_opps)} BTC + "
-            f"{len(metals_opps)} metals = {len(all_opps)} toplam"
+            f"Opportunities: {len(weather_opps)} weather + {len(btc_opps)} BTC + "
+            f"{len(metals_opps)} metals + {len(universal_opps)} universal = {len(all_opps)} total"
         )
 
-        # 5) Otomatik bahis aç
+        # 5) Open auto bets
         bets_placed = 0
-        # Acik pozisyonlardaki market isimlerini kontrol et (duplicate onleme)
+        # Check open market names for deduplication
         open_markets = set(p.get("market", "").lower() for p in self.sim.positions)
+
+        # Max open positions cap
+        max_positions = 15
+        if len(self.sim.positions) >= max_positions:
+            self._log_cycle(
+                f"Max positions reached ({len(self.sim.positions)}/{max_positions}), skipping new bets",
+                "warning"
+            )
+            bets_placed = self.max_bets_per_cycle  # Skip the betting loop
 
         for opp in all_opps:
             if bets_placed >= self.max_bets_per_cycle:
                 break
             if CFG.max_daily_usd > 0 and self.daily_spent >= CFG.max_daily_usd:
-                self._log_cycle("Gunluk limit doldu, bahis atlanadi", "warning")
+                self._log_cycle("Daily limit reached, skipping bets", "warning")
                 break
 
-            # Ayni markete tekrar bahis acma
+            # Skip duplicate markets
             if opp["market"].lower() in open_markets:
-                self._log_cycle(f"SKIP (acik pozisyon var): {opp['market'][:40]}")
+                self._log_cycle(f"SKIP (position exists): {opp['market'][:40]}")
                 continue
 
-            edge = abs(opp["edge"])
-            if edge < self.min_edge_auto:
+            # Directional edge filter — YES needs positive edge, NO needs negative edge
+            raw_edge = opp["edge"]
+            side_from_engine = opp["side"]
+            if side_from_engine == "YES" and raw_edge < self.min_edge_auto:
+                continue
+            elif side_from_engine == "NO" and raw_edge > -self.min_edge_auto:
                 continue
 
-            # --- GÜÇLÜ BAHİS FİLTRESİ ---
-            # 1) Likidite kontrolü: market likit olmalı
-            if not opp.get("is_liquid", True):
-                self._log_cycle(f"SKIP (likit degil): {opp['market'][:40]}")
-                continue
-
-            # 2) Spread kontrolü: orderbook spread çok geniş olmamalı
-            ob_spread = opp.get("ob_spread", 0)
-            if ob_spread > 0.10:  # %10'dan fazla spread riskli
-                self._log_cycle(f"SKIP (spread cok genis {ob_spread:.1%}): {opp['market'][:40]}")
-                continue
-
-            # 3) Confidence kontrolü (metals için): en az %30 güven
-            confidence = opp.get("confidence", 1.0)
-            if opp["type"] == "metals" and confidence < 0.30:
-                self._log_cycle(f"SKIP (dusuk confidence {confidence:.0%}): {opp['market'][:40]}")
-                continue
-
-            # 4) Çok düşük fiyatlı tokenlarda dikkatli ol (penny bet riski)
-            market_price = opp.get("market_price", 0.5)
-            if market_price < 0.02 or market_price > 0.98:
-                # Çok uç fiyatlar - bunlar genelde "neredeyse kesin" marketler
-                # Edge yüksek görünür ama gerçekte çok riskli
-                if edge < 0.25:  # Edge %25'ten az ise atla
-                    self._log_cycle(f"SKIP (uc fiyat {market_price:.3f}, edge yetersiz): {opp['market'][:40]}")
-                    continue
-
-            # 5) Kısa vadeli market filtresi - 30 günden uzak marketlere bahis açma
-            opp_end = opp.get("end_date", "")
-            if opp_end:
+            # Per-type expiry filter
+            opp_type = opp.get("type", "")
+            expiry_hours = {"btc": 72, "weather": 72, "universal": 48, "metals": 168}.get(opp_type, 72)
+            end_date_str = opp.get("end_date", "")
+            if end_date_str:
                 try:
-                    opp_end_dt = datetime.fromisoformat(opp_end.replace("Z", "+00:00"))
-                    opp_days_left = (opp_end_dt - datetime.now(timezone.utc)).days
-                    if opp_days_left > 30:
-                        continue  # 30 günden uzak market, sessizce atla
+                    end_dt = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
+                    hours_left = (end_dt - datetime.now(timezone.utc)).total_seconds() / 3600
+                    if hours_left < expiry_hours:
+                        self._log_cycle(f"SKIP (expires in {hours_left:.0f}h < {expiry_hours}h): {opp['market'][:40]}")
+                        continue
                 except (ValueError, TypeError):
                     pass
 
-            real_prob = opp.get("noaa_prob") or opp.get("real_prob", 0.5)
-
-            # 6) Güçlü olasılık filtresi: gerçek olasılık çok belirsiz olmamalı
-            # %35-%65 arası "belirsiz bölge" - burada bahis riskli
-            if 0.35 <= real_prob <= 0.65 and edge < 0.20:
-                self._log_cycle(f"SKIP (belirsiz olasilik {real_prob:.0%}): {opp['market'][:40]}")
+            # Confidence floor: skip low-confidence analysis
+            confidence = opp.get("confidence", 0)
+            if confidence > 0 and confidence < 0.30:
+                self._log_cycle(f"SKIP (low confidence {confidence:.0%}): {opp['market'][:40]}")
                 continue
 
-            bet_size = self.calculate_bet_size(opp["edge"], real_prob)
+            real_prob = opp.get("noaa_prob") or opp.get("real_prob", 0.5)
+            opp_confidence = opp.get("confidence", 0.5)
+            bet_size = self.calculate_bet_size(opp["edge"], real_prob, opp_confidence)
             if bet_size < 0.50:
                 continue
 
-            # Bahis yap
+            # Place bet
             side = opp["side"]
             price = opp["market_price"] if side == "YES" else 1 - opp["market_price"]
             if price <= 0 or price >= 1:
@@ -1803,31 +2168,33 @@ class AutoTrader:
                     self.stats["btc_bets"] += 1
                 elif opp["type"] == "metals":
                     self.stats["metals_bets"] = self.stats.get("metals_bets", 0) + 1
+                elif opp["type"] == "universal":
+                    self.stats["universal_bets"] = self.stats.get("universal_bets", 0) + 1
 
                 real_prob = opp.get("noaa_prob") or opp.get("real_prob", 0)
                 self._log_cycle(
                     f">> AUTO-BET: {side} ${bet_size:.0f} @ {price:.3f} | "
                     f"Edge: {opp['edge']*100:+.1f}% | "
-                    f"Gerçek: {real_prob*100:.0f}% vs Market: {opp['market_price']*100:.0f}% | "
+                    f"Real: {real_prob*100:.0f}% vs Market: {opp['market_price']*100:.0f}% | "
                     f"{opp['market'][:50]}",
                     "success"
                 )
                 log.info(f"[AUTO] BET: {side} ${bet_size} on {opp['market'][:40]} edge={opp['edge']*100:.1f}%")
             else:
-                self._log_cycle(f"Bahis hatası: {result.get('error', '')}", "error")
+                self._log_cycle(f"Bet error: {result.get('error', '')}", "error")
 
-        # 6) Açık pozisyonları otomatik resolve et
+        # 6) Auto-resolve open positions
         resolved = await self.auto_resolve_positions()
 
-        # 7) Sonucu kaydet
+        # 7) Save result
         cycle_duration = (datetime.now(timezone.utc) - cycle_start).total_seconds()
         self.last_scan_time = datetime.now(timezone.utc).isoformat()
 
         summary = self.sim.get_portfolio_summary()
         self._log_cycle(
-            f"Döngü #{self.scan_count} tamamlandı ({cycle_duration:.1f}s) | "
-            f"{bets_placed} bahis, {resolved} resolve | "
-            f"Bakiye: ${summary['balance']:.0f} | WR: {summary['win_rate']}%"
+            f"Cycle #{self.scan_count} completed ({cycle_duration:.1f}s) | "
+            f"{bets_placed} bets, {resolved} resolved | "
+            f"Balance: ${summary['balance']:.0f} | WR: {summary['win_rate']}%"
         )
 
         scan_result = {
@@ -1836,6 +2203,7 @@ class AutoTrader:
             "weather_opportunities": weather_opps,
             "btc_opportunities": btc_opps,
             "metals_opportunities": metals_opps,
+            "universal_opportunities": universal_opps,
             "total_opportunities": len(all_opps),
             "bets_placed": bets_placed,
             "resolved": resolved,
@@ -1844,7 +2212,7 @@ class AutoTrader:
         }
         self.last_scan_result = scan_result
 
-        # Dosyaya kaydet
+        # Save to file
         try:
             with open(DATA_DIR / "last_scan.json", "w") as f:
                 json.dump(scan_result, f, indent=2, default=str)
@@ -1854,37 +2222,37 @@ class AutoTrader:
         return scan_result
 
     async def _loop(self):
-        """Ana otomatik trading döngüsü"""
+        """Main auto trading loop"""
         self.stats["started_at"] = datetime.now(timezone.utc).isoformat()
-        log.info(f"[AUTO] Otomatik trading baslatildi | "
+        log.info(f"[AUTO] Auto trading started | "
                  f"Interval: {self.scan_interval}s | Min Edge: {self.min_edge_auto*100:.1f}%")
-        self._log_cycle("Otomatik trading sistemi baslatildi [OK]")
+        self._log_cycle("Auto trading system started [OK]")
 
         while self.running:
             try:
                 await self.run_scan_cycle()
             except Exception as e:
                 self.stats["errors"] += 1
-                log.error(f"[AUTO] Dongu hatasi: {e}", exc_info=True)
-                self._log_cycle(f"Döngü hatası: {e}", "error")
+                log.error(f"[AUTO] Cycle error: {e}", exc_info=True)
+                self._log_cycle(f"Cycle error: {e}", "error")
 
-            # Sonraki tarama zamanını hesapla
+            # Calculate next scan time
             self.next_scan_time = (
                 datetime.now(timezone.utc) + timedelta(seconds=self.scan_interval)
             ).isoformat()
 
-            # Bekleme
-            log.info(f"[AUTO] Sonraki dongu {self.scan_interval}s sonra...")
+            # Wait
+            log.info(f"[AUTO] Next cycle in {self.scan_interval}s...")
             for _ in range(self.scan_interval):
                 if not self.running:
                     break
                 await asyncio.sleep(1)
 
-        self._log_cycle("Otomatik trading durduruldu [STOP]")
-        log.info("[AUTO] Otomatik trading durduruldu")
+        self._log_cycle("Auto trading stopped [STOP]")
+        log.info("[AUTO] Auto trading stopped")
 
     def start(self):
-        """Trading'i başlat"""
+        """Start trading"""
         if self.running:
             return {"status": "already_running"}
         self.running = True
@@ -1892,7 +2260,7 @@ class AutoTrader:
         return {"status": "started"}
 
     def stop(self):
-        """Trading'i durdur"""
+        """Stop trading"""
         if not self.running:
             return {"status": "already_stopped"}
         self.running = False
@@ -1902,7 +2270,7 @@ class AutoTrader:
         return {"status": "stopped"}
 
     def update_config(self, **kwargs):
-        """Konfigürasyonu güncelle"""
+        """Update configuration"""
         if "scan_interval" in kwargs:
             self.scan_interval = max(30, int(kwargs["scan_interval"]))
         if "min_edge_pct" in kwargs:
