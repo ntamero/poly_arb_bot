@@ -805,7 +805,7 @@ initDailyBalance();
 function connectWS(){
   const proto=location.protocol==='https:'?'wss':'ws';
   ws=new WebSocket(`${proto}://${location.host}/ws`);
-  ws.onopen=()=>{ setWS('live','LIVE'); log('✓ WebSocket connected','s'); loadInit(); };
+  ws.onopen=()=>{ setWS('live','LIVE'); stopPoll(); log('✓ WebSocket connected','s'); loadInit(); };
   ws.onmessage=e=>{ try{handle(JSON.parse(e.data));}catch(_){} };
   let delay=2000;
   ws.onclose=()=>{ setWS('err','DISCONNECTED'); log('⚠ Connection lost...','w'); startPoll(); setTimeout(()=>{delay=Math.min(delay*1.5,15000);connectWS();},delay); };
@@ -814,8 +814,25 @@ function connectWS(){
 let pollTmr=null;
 function startPoll(){
   if(pollTmr)return;
-  pollTmr=setInterval(async()=>{ try{ const d=await(await fetch('/api/live-prices')).json(); if(d.btc)updateBTC(d.btc); }catch(e){} },4000);
+  pollTmr=setInterval(async()=>{
+    try{
+      const [lp,pr,ar]=await Promise.all([
+        fetch('/api/live-prices').then(r=>r.json()).catch(()=>null),
+        fetch('/api/portfolio').then(r=>r.json()).catch(()=>null),
+        fetch('/api/auto/status').then(r=>r.json()).catch(()=>null),
+      ]);
+      if(lp&&lp.btc)updateBTC(lp.btc);
+      if(pr)updatePortfolio(pr);
+      if(ar)updateAutoStatus({
+        running:ar.running, scan_count:ar.scan_count,
+        auto_bets:ar.auto_bets_placed, auto_resolves:ar.auto_resolves,
+        daily_spent:ar.daily_spent, next_scan:ar.next_scan_time,
+        scan_interval:ar.scan_interval,
+      });
+    }catch(e){}
+  },4000);
 }
+function stopPoll(){ if(pollTmr){clearInterval(pollTmr);pollTmr=null;} }
 function setWS(state,txt){
   document.getElementById('wsPill').className='ws-pill '+state;
   document.getElementById('wsLbl').textContent=txt;
@@ -837,7 +854,7 @@ function handle(msg){
     log('⟳ Scan started...','w');
   }else if(msg.type==='scan_result'){
     document.getElementById('scanIcon').textContent='⟳';
-    const all=[...(msg.data.weather_opportunities||[]),...(msg.data.btc_opportunities||[]),...(msg.data.metals_opportunities||[])];
+    const all=[...(msg.data.weather_opportunities||[]),...(msg.data.btc_opportunities||[]),...(msg.data.metals_opportunities||[]),...(msg.data.universal_opportunities||[])];
     if(all.length)renderOpps(all);
     log(`✓ Scan: ${msg.data.total_opportunities||0} opportunities found`,'s');
   }
@@ -930,16 +947,19 @@ function updatePortfolio(p){
 
   // ── Topbar ──
   const tbBal=document.getElementById('tb_bal'); if(tbBal)flashNum(tbBal,'$'+bal.toFixed(2));
+  // DAILY P&L = current balance - daily start balance (not total PnL)
+  const dpnlVal=dailyStartBal!==null?(bal-dailyStartBal):pnl;
   const tbPnl=document.getElementById('tb_pnl');
-  if(tbPnl){ flashNum(tbPnl,(pnl>=0?'+':'−')+'$'+Math.abs(pnl).toFixed(2),pnl>=0?'g':'r'); tbPnl.className='tb-val '+(pnl>=0?'g':'r'); }
+  if(tbPnl){ flashNum(tbPnl,(dpnlVal>=0?'+':'−')+'$'+Math.abs(dpnlVal).toFixed(2),dpnlVal>=0?'g':'r'); tbPnl.className='tb-val '+(dpnlVal>=0?'g':'r'); }
   setTxt('tb_open',p.open_positions||0);
   const tbWr=document.getElementById('tb_wr');
   if(tbWr){ tbWr.textContent=pct.toFixed(1)+'%'; tbWr.className='tb-val '+(pct>=50?'g':'r'); }
 
   // ── Daily strip ──
+  // Use initial_balance from server as the authoritative start balance
   if(!dailyStartBal){
-    dailyStartBal=bal;
-    try{localStorage.setItem('polyarb_daily',JSON.stringify({bal,date:new Date().toDateString()}));}catch(e){}
+    dailyStartBal=p.initial_balance||bal;
+    try{localStorage.setItem('polyarb_daily',JSON.stringify({bal:dailyStartBal,date:new Date().toDateString()}));}catch(e){}
   }
   setTxt('ds_start','$'+dailyStartBal.toFixed(2));
   const dpnl=bal-dailyStartBal;
@@ -1575,10 +1595,8 @@ async function loadInit(){
     renderPositions(positions, {});
     renderClosed(closedTrades);
 
-    // History — only render in active tab
-    if(document.getElementById('panel-history').classList.contains('active')){
-      renderHistory(hist.trades||[]);
-    }
+    // History — always render so data is ready when user switches tab
+    renderHistory(hist.trades||[]);
 
     // AutoTrader status
     if(auto)updateAutoStatus({
